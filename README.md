@@ -14,4 +14,4 @@ TODO
 - Support arbitrary network structures
 - Support TCP connected peers
 - Improve scalability
-- Handle race conditions on `ppg` module more correctory
+- Handle race conditions on `ppg` module more correctly
