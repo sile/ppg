@@ -1,8 +1,8 @@
 %% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
 %%
-%% @doc Root Supervisor
+%% @doc Supervisor for ppg_peer processes
 %% @private
--module('ppg_sup').
+-module(ppg_peer_sup).
 
 -behaviour(supervisor).
 
@@ -28,9 +28,5 @@ start_link() ->
 %%----------------------------------------------------------------------------------------------------------------------
 %% @private
 init([]) ->
-    Children =
-        [
-         ppg_local_ns:child_spec(),
-         #{id => peer_sup, start => {ppg_peer_sup, start_link, []}, type => supervisor}
-        ],
-    {ok, {#{}, Children}}.
+    Child = #{id => peer, start => {ppg_peer, start_link, []}, restart => temporary},
+    {ok, {#{strategy => simple_one_for_one}, [Child]}}.
