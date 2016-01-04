@@ -98,8 +98,7 @@ join(Group, Member) ->
 -spec join(name(), pid(), join_options()) -> ok | {error, {no_such_group, name()}}.
 join(Group, Member, Options) ->
     Args = [Group, Member, Options],
-    _ = is_pid(Member) orelse error(badarg, Args),
-    _ = node(Member) =:= node() orelse error(badarg, Args),
+    _ = ppg_util:is_local_pid(Member) orelse error(badarg, Args),
     _ = is_list(Options) orelse error(badarg, Args),
     _ = ppg_peer:is_valid_options(Options) orelse error(badarg, Args),
 
@@ -111,8 +110,7 @@ join(Group, Member, Options) ->
 -spec leave(name(), pid()) -> ok | {error, {no_such_group, name()}}.
 leave(Group, Member) ->
     Args = [Group, Member],
-    _ = is_pid(Member) orelse error(badarg, Args),
-    _ = node(Member) =:= node() orelse error(badarg, Args),
+    _ = ppg_util:is_local_pid(Member) orelse error(badarg, Args),
 
     case pg2:get_members(?PG2_NAME(Group)) of
         {error, {no_such_group, _}} -> {error, {no_such_group, Group}};

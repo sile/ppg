@@ -8,6 +8,7 @@
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
 -export([is_pos_integer/1]).
+-export([is_local_pid/1]).
 -export([proplist_to_record/3]).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -15,6 +16,9 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -spec is_pos_integer(pos_integer() | term()) -> boolean().
 is_pos_integer(X) -> is_integer(X) andalso X > 0.
+
+-spec is_local_pid(pid() | term()) -> boolean().
+is_local_pid(X) -> is_pid(X) andalso node(X) =:= node().
 
 -spec proplist_to_record(atom(), [atom()], [{atom(), term()}]) -> tuple().
 proplist_to_record(RecordName, Fields, List) ->
