@@ -33,4 +33,4 @@ init([]) ->
          ppg_local_ns:child_spec(),
          #{id => peer_sup, start => {ppg_peer_sup, start_link, []}, type => supervisor}
         ],
-    {ok, {#{}, Children}}.
+    {ok, {#{strategy => rest_for_one}, Children}}.

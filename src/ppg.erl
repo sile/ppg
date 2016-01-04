@@ -6,6 +6,8 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
+-export([default_join_options/0]).
+
 -export([create/1]).
 -export([delete/1]).
 -export([which_groups/0]).
@@ -18,6 +20,7 @@
 -export([broadcast/2]).
 
 -export_type([name/0]).
+-export_type([communication_graph/0]).
 -export_type([join_option/0, join_options/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -27,12 +30,20 @@
 
 -type name() :: term().
 
+-type communication_graph() :: [{Node::pid(), Member::pid(), [Edge::{eager|lazy, pid()}]}].
+
 -type join_options() :: [join_option()].
 -type join_option() :: {contact_process_count, pos_integer()}.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
+-spec default_join_options() -> join_options().
+default_join_options() ->
+    [
+     {contact_process_count, 5}
+    ].
+
 -spec create(name()) -> ok.
 create(Group) ->
     pg2:create(?PG2_NAME(Group)).
@@ -53,22 +64,24 @@ which_groups() ->
 -spec get_members(name()) -> [pid()] | {error, {no_such_group, name()}}.
 get_members(Group) ->
     case get_graph(Group) of
-        {error, Reason} -> {error, Reason};
-        Graph           -> [Member || {_, Member, _} <- Graph]
+        {error, {no_process, _}} -> [];
+        {error, Reason}          -> {error, Reason};
+        Graph                    -> [Member || {_, Member, _} <- Graph]
     end.
 
--spec get_graph(name()) -> [{pid(), pid(), [{eager|lazy, pid()}]}] | {error, {no_such_group, name()}}.
+-spec get_graph(name()) -> communication_graph() | {error, {no_such_group, name()}}.
 get_graph(Group) ->
     case get_closest_peer(Group) of
-        {error, Reason} -> {error, Reason};
-        Peer            -> ppg_peer:get_graph(Peer)
+        {error, {no_process, _}} -> [];
+        {error, Reason}          -> {error, Reason};
+        Peer                     -> ppg_peer:get_graph(Peer, 1000)
     end.
 
 -spec get_local_members(name()) -> [pid()] | {error, {no_such_group, name()}}.
 get_local_members(Group) ->
     case pg2:get_members(?PG2_NAME(Group)) of
         {error, {no_such_group, _}} -> {error, {no_such_group, Group}};
-        _                           -> ppg_peer_sup:which_children(Group)
+        _                           -> [Member || {_, Member} <- ppg_peer_sup:which_children(Group)]
     end.
 
 -spec get_closest_pid(name()) -> pid() | {error, Reason} when
@@ -89,9 +102,12 @@ join(Group, Member, Options) ->
     _ = is_pid(Member) orelse error(badarg, Args),
     _ = node(Member) =:= node() orelse error(badarg, Args),
     _ = is_list(Options) orelse error(badarg, Args),
-     _ = ppg_peer:is_valid_options(Options) orelse error(badarg, Args),
+    _ = ppg_peer:is_valid_options(Options) orelse error(badarg, Args),
 
-    ppg_peer_sup:start_child(Group, Member, Options).
+    case ppg_peer_sup:start_child(Group, Member, Options ++ default_join_options()) of
+        {ok, _}         -> ok;
+        {error, Reason} -> {error, Reason}
+    end.
 
 -spec leave(name(), pid()) -> ok | {error, {no_such_group, name()}}.
 leave(Group, Member) ->
@@ -111,8 +127,9 @@ leave(Group, Member) ->
 -spec broadcast(name(), term()) -> ok | {error, {no_such_group, name()}}.
 broadcast(Group, Message) ->
     case get_closest_peer(Group) of
-        {error, Reason} -> {error, Reason};
-        Peer            -> ppg_peer:broadcast(Peer, Message)
+        {error, {no_process, _}} -> ok;
+        {error, Reason}          -> {error, Reason};
+        Peer                     -> ppg_peer:broadcast(Peer, Message)
     end.
 
 %%----------------------------------------------------------------------------------------------------------------------

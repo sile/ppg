@@ -61,7 +61,7 @@ member_test_() ->
                 ?assertEqual([], ppg:get_members(Group)),
                 ?assertEqual([], ppg:get_local_members(Group)),
                 ?assertEqual([], ppg:get_graph(Group)),
-                ?assertEqual({no_process, Group}, ppg:get_closest_pid(Group))
+                ?assertEqual({error, {no_process, Group}}, ppg:get_closest_pid(Group))
         end}
       ]).
 
@@ -70,6 +70,19 @@ broadcast_test_() ->
     foreach(
       [Group],
       [
+       {"Broadcasts to a single member group",
+        fun () ->
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                receive hello -> ?assert(false) after 20 -> ?assert(true) end,
+
+                ok = ppg:join(Group, self()),
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                receive hello -> ?assert(true) after 20 -> ?assert(false) end,
+
+                ok = ppg:leave(Group, self()),
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                receive hello -> ?assert(false) after 20 -> ?assert(true) end
+        end}
       ]).
 
 %%----------------------------------------------------------------------------------------------------------------------
