@@ -11,8 +11,10 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -export([start_link/4]).
 -export([stop/1]).
+-export([stop_all/1]).
 -export([is_valid_options/1]).
 -export([get_graph/2]).
+-export([get_destination/1]).
 -export([broadcast/2]).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -51,6 +53,10 @@ start_link(Name, Group, Destination, Options) ->
 stop(Peer) ->
     gen_server:stop(Peer).
 
+-spec stop_all(local:otp_ref()) -> no_return().
+stop_all(Peer) ->
+    error(unimplemented, [Peer]).
+
 -spec is_valid_options([ppg:join_option() | term()]) -> boolean().
 is_valid_options(Options0) ->
     Options1 = Options0 ++ ppg:default_join_options(),
@@ -60,6 +66,10 @@ is_valid_options(Options0) ->
 -spec broadcast(local:otp_ref(), term()) -> ok.
 broadcast(Peer, Message) ->
     gen_server:call(Peer, {broadcast, Message}).
+
+-spec get_destination(local:otp_ref()) -> pid().
+get_destination(Peer) ->
+    gen_server:call(Peer, get_destination).
 
 -spec get_graph(local:otp_ref(), timeout()) -> ppg:communication_graph().
 get_graph(Peer, Timeout) ->
@@ -102,6 +112,8 @@ init([Group, Destination, Options]) ->
 %% @private
 handle_call({broadcast, Arg}, _From, State) ->
     handle_broadcast(Arg, State);
+handle_call(get_destination, _From, State) ->
+    {reply, State#?STATE.destination, State};
 handle_call({get_graph, Arg}, _From, State) ->
     handle_get_graph(Arg, State);
 handle_call(_Request, _From, State) ->

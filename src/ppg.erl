@@ -64,7 +64,6 @@ which_groups() ->
 -spec get_members(name()) -> [pid()] | {error, {no_such_group, name()}}.
 get_members(Group) ->
     case get_graph(Group) of
-        {error, {no_process, _}} -> [];
         {error, Reason}          -> {error, Reason};
         Graph                    -> [Member || {_, Member, _} <- Graph]
     end.
