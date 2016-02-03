@@ -38,6 +38,8 @@
         {
           group :: ppg:name(),
           destination :: pid(),
+          pss :: ppg_peer_sampling_service:instance(),
+          tree :: ppg_plumtree:instance(),
           opt :: #opt{}
         }).
 
@@ -95,18 +97,28 @@ get_graph(Peer, Timeout) ->
 %%----------------------------------------------------------------------------------------------------------------------
 %% @private
 init([Group, Destination, Options]) ->
-    State0 =
-        #?STATE{
-            group = Group,
-            destination = Destination,
-            opt = ppg_util:proplist_to_record(opt, record_info(fields, opt), Options)
-           },
-    case become_contact_peer_if_needed(State0) of
-        error        -> {stop, {no_such_group, Group}};
-        {ok, State1} ->
+    Opt = ppg_util:proplist_to_record(opt, record_info(fields, opt), Options),
+    case become_contact_peer_if_needed(Group, Opt#opt.contact_process_count) of
+        error -> {stop, {no_such_group, Group}};
+        ok    ->
             _ = link(Destination),
             _ = monitor(process, Destination),
-            {ok, State1}
+
+            ContactPeer = pg2:get_closest_pid(?PG2_NAME(Group)),
+            Pss0 = proplists:get_value(peer_sampling_service, Options, ppg:default_peer_sampling_service()),
+            Pss1 = ppg_peer_sampling_service:join(ContactPeer, Pss0),
+            {Peers, Pss2} = ppg_peer_sampling_service:get_peers(Pss1),
+            Tree = ppg_plumtree:new(Peers),
+
+            State =
+                #?STATE{
+                    group = Group,
+                    destination = Destination,
+                    pss = Pss2,
+                    tree = Tree,
+                    opt = Opt
+                   },
+            {ok, State}
     end.
 
 %% @private
@@ -140,14 +152,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec become_contact_peer_if_needed(#?STATE{}) -> {ok, #?STATE{}} | error.
-become_contact_peer_if_needed(State) ->
-    #?STATE{group = Group, opt = #opt{contact_process_count = Count}} = State,
+-spec become_contact_peer_if_needed(ppg:name(), pos_integer()) -> ok | error.
+become_contact_peer_if_needed(Group, MinContactProcCount) ->
     case pg2:get_members(?PG2_NAME(Group)) of
         {error, _} -> error;
         Peers      ->
-            _ = length(Peers) < Count andalso pg2:join(?PG2_NAME(Group), self()),
-            {ok, State}
+            _ = length(Peers) < MinContactProcCount andalso pg2:join(?PG2_NAME(Group), self()),
+            ok
     end.
 
 %% TODO: 未接続のエッジがなくなったらタイムアウトを待たずに終了する (接続性が満たされているかどうかを返すのも良いかもしれない)

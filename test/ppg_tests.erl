@@ -70,11 +70,13 @@ broadcast_test_() ->
     foreach(
       [Group],
       [
-       {"Broadcasts to a single member group",
+       {"Broadcasts to an empty group",
         fun () ->
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
-                receive hello -> ?assert(false) after 20 -> ?assert(true) end,
-
+                receive hello -> ?assert(false) after 20 -> ?assert(true) end
+        end},
+       {"Broadcasts to a single member group",
+        fun () ->
                 ok = ppg:join(Group, self()),
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
@@ -82,6 +84,15 @@ broadcast_test_() ->
                 ok = ppg:leave(Group, self()),
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
                 receive hello -> ?assert(false) after 20 -> ?assert(true) end
+        end},
+       {"Broadcasts to a two member group",
+        fun () ->
+                ok = ppg:join(Group, self()),
+                ok = ppg:join(Group, self()),
+
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                receive hello -> ?assert(true) after 20 -> ?assert(false) end,
+                receive hello -> ?assert(true) after 20 -> ?assert(false) end
         end}
       ]).
 
