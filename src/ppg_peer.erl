@@ -39,7 +39,7 @@
           group :: ppg:name(),
           destination :: pid(),
           pss :: ppg_peer_sampling_service:instance(),
-          tree :: ppg_plumtree:instance(),
+          tree :: ppg_plumtree:tree(),
           opt :: #opt{}
         }).
 
@@ -108,7 +108,7 @@ init([Group, Destination, Options]) ->
             Pss0 = proplists:get_value(peer_sampling_service, Options, ppg:default_peer_sampling_service()),
             Pss1 = ppg_peer_sampling_service:join(ContactPeer, Pss0),
             {Peers, Pss2} = ppg_peer_sampling_service:get_peers(Pss1),
-            Tree = ppg_plumtree:new(Peers),
+            Tree = ppg_plumtree:new(Destination, Peers),
 
             State =
                 #?STATE{
@@ -136,10 +136,24 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 %% @private
-handle_info({'DOWN', _, _, _, _}, State) ->
-    {stop, normal, State};
-handle_info(_Info, State) ->
-    {noreply, State}.
+handle_info(Info, State) ->
+    case ppg_peer_sampling_service:handle_info(Info, State#?STATE.pss) of
+        {ok, Pss}       -> {noreply, State#?STATE{pss = Pss}};
+        {error, Reason} -> {stop, Reason, State};
+        ignore          ->
+            case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
+                {ok, Tree}      -> {noreply, State#?STATE{tree = Tree}};
+                {error, Reason} -> {stop, Reason, State};
+                ignore          ->
+                    case Info of
+                        {'DOWN', _, _, Pid, _} when Pid =:= State#?STATE.destination ->
+                            {stop, normal, State};
+                        _ ->
+                            {stop, {unknown_info, Info}, State}
+                            %% {noreply, State} TODO:
+                    end
+            end
+    end.
 
 %% @private
 terminate(_Reason, _State) ->
@@ -171,8 +185,8 @@ build_graph(Acc, Ref) ->
 
 -spec handle_broadcast(term(), #?STATE{}) -> {reply, ok, #?STATE{}}.
 handle_broadcast(Message, State) ->
-    _ = State#?STATE.destination ! Message,
-    {reply, ok, State}.
+    Tree = ppg_plumtree:broadcast(Message, State#?STATE.tree),
+    {reply, ok, State#?STATE{tree = Tree}}.
 
 -spec handle_get_graph({reference(), pid()}, #?STATE{}) -> {reply, Todo::term(), #?STATE{}}.
 handle_get_graph(_Requestor, State) ->

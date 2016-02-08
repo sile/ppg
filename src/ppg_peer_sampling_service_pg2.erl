@@ -96,16 +96,23 @@ schedule_member_check(State) ->
 -spec handle_member_check(#?STATE{}) -> {ok, #?STATE{}}.
 handle_member_check(State0) ->
     Num = 5, % TODO:
-    Monitors0 = maps:size(State0#?STATE.monitors),
+    Monitors0 = State0#?STATE.monitors,
     Monitors1 =
         case maps:values(Monitors0) -- pg2:get_members(State0#?STATE.pg2_group) of
             []        -> Monitors0;
             LeftPeers ->
                 lists:foldl(
                   fun (P, Acc) ->
-                          _ = demonitor(P, [flush]),
                           ok = ppg_peer_sampling_service:notify_neighbor_down(P),
-                          maps:filter(fun (_, Pid) -> Pid =/= P end, Acc)
+                          maps:filter(
+                            fun (Ref, Pid) ->
+                                    Pid =/= P orelse
+                                        begin
+                                            _ = demonitor(Ref, [flush]),
+                                            false
+                                        end
+                            end,
+                            Acc)
                   end,
                   Monitors0,
                   LeftPeers)
@@ -128,7 +135,7 @@ handle_member_check(State0) ->
                 State0#?STATE{monitors = Monitors2}
         end,
     ok = schedule_member_check(State1),
-    State1.
+    {ok, State1}.
 
 -spec handle_down(reference(), #?STATE{}) -> {ok, #?STATE{}}.
 handle_down(Ref, State0) ->
