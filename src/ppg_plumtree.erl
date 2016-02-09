@@ -63,6 +63,10 @@ handle_info({'NEIGHBOR_UP', Peer},  Tree) ->
     handle_neighbor_up(Peer, Tree);
 handle_info({'NEIGHBOR_DOWN', Peer}, Tree) ->
     handle_neighbor_down(Peer, Tree);
+handle_info({ihave_timeout, Arg}, Tree) ->
+    handle_ihave_timeout(Arg, Tree);
+handle_info({'GRAFT', Arg}, Tree) ->
+    handle_graft(Arg, Tree);
 handle_info(_Info, _Tree) ->
     ignore.
 
@@ -137,6 +141,32 @@ handle_ihave({MsgId, Round, Sender}, Tree) ->
             end
     end.
 
+-spec handle_ihave_timeout(msg_id(), tree()) -> {ok, tree()}.
+handle_ihave_timeout(MsgId, Tree0) ->
+    case Tree0#?STATE.missing of
+        #{MsgId := {_, [{Pid, Round} | IhaveList]}} ->
+            IhaveTimeout = 500,  % TODO:
+            Timer = erlang:send_after(IhaveTimeout, self(), {ihave_timeout, MsgId}),
+            Missing = maps:put(MsgId, {Timer, IhaveList}, Tree0#?STATE.missing),
+            Tree1 = add_eager(Pid, remove_lazy(Pid, Tree0)),
+            _ = Pid ! {'GRAFT', {MsgId, Round, self()}},
+            Tree2 = Tree1#?STATE{missing = Missing},
+            {ok, Tree2};
+        _ ->
+            {ok, Tree0} % The message is already delivered in another path
+    end.
+
+-spec handle_graft({msg_id(), round(), pid()}, tree()) -> {ok, tree()}.
+handle_graft({MsgId, Round, Sender}, Tree0) ->
+    Tree1 = add_eager(Sender, remove_lazy(Sender, Tree0)),
+    case Tree0#?STATE.receives of
+        #{MsgId := Message} ->
+            _ = Sender ! {'GOSSIP', {MsgId, Message, Round, self()}},
+            {ok, Tree1};
+        _ ->
+            {ok, Tree1}
+    end.
+
 -spec handle_prune(pid(), tree()) -> {ok, tree()}.
 handle_prune(Sender, Tree0) ->
     Tree1 = add_lazy(Sender, remove_eager(Sender, Tree0)),
@@ -152,6 +182,8 @@ eager_push(MsgId, Message, Round, Sender, Tree) ->
            fun (Pid) ->
                    Pid =/= Sender andalso
                        begin
+                           %% for debug
+                           timer:sleep(rand:uniform(500)),
                            Pid ! {'GOSSIP', {MsgId, Message, Round, self()}}
                        end
            end,
