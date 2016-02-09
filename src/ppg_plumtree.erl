@@ -30,6 +30,9 @@
 
 -opaque tree() :: #?STATE{}.
 
+-type msg_id() :: reference().
+-type round() :: non_neg_integer().
+
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
@@ -50,6 +53,12 @@ broadcast(Message, Tree0) ->
     deliver(MsgId, Message, Tree2).
 
 -spec handle_info(term(), tree()) -> {ok, tree()} | ignore | {error, term()}.
+handle_info({'GOSSIP', Arg}, Tree) ->
+    handle_gossip(Arg, Tree);
+handle_info({'IHAVE', Arg}, Tree) ->
+    handle_ihave(Arg, Tree);
+handle_info({'PRUNE', Arg}, Tree) ->
+    handle_prune(Arg, Tree);
 handle_info({'NEIGHBOR_UP', Peer},  Tree) ->
     handle_neighbor_up(Peer, Tree);
 handle_info({'NEIGHBOR_DOWN', Peer}, Tree) ->
@@ -72,3 +81,118 @@ handle_neighbor_up(Peer, Tree) ->
 %-spec handle_neighbor_down(pid(), tree()) -> {ok, tree()}.
 handle_neighbor_down(_Peer, _Tree) ->
     {error, unimplemented}.
+
+-spec handle_gossip({msg_id(), term(), round(), pid()}, tree()) -> {ok, tree()}.
+handle_gossip({MsgId, Message, Round, Sender}, Tree0) ->
+    case Tree0#?STATE.receives of
+        #{MsgId := _} ->
+            Tree1 = add_lazy(Sender, remove_eager(Sender, Tree0)),
+            _ = Sender ! {'PRUNE', self()},
+            {ok, Tree1};
+        _ ->
+            Tree1 = deliver(MsgId, Message, Tree0),
+            Tree2 =
+                case Tree1#?STATE.missing of
+                    #{MsgId := {Timer, _}} ->
+                        _ = erlang:cancel_timer(Timer),
+                        Tree1#?STATE{missing = maps:remove(MsgId, Tree1#?STATE.missing)};
+                    _ ->
+                        Tree1
+                end,
+            Tree3 = eager_push(MsgId, Message, Round + 1, Sender, Tree2),
+            Tree4 = lazy_push(MsgId, Message, Round + 1, Sender, Tree3),
+            Tree5 = add_eager(Sender, remove_lazy(Sender, Tree4)),
+
+            OldMissing = Tree1#?STATE.missing,
+            Tree6 = optimize(OldMissing, MsgId, Round, Sender, Tree5),
+            {ok, Tree6}
+    end.
+
+-spec handle_ihave({msg_id(), round(), pid()}, tree()) -> {ok, tree()}.
+handle_ihave({MsgId, Round, Sender}, Tree) ->
+    case Tree#?STATE.receives of
+        #{MsgId := _} -> {ok, Tree};
+        _             ->
+            case Tree#?STATE.missing of
+                #{MsgId := {Timer, List}} ->
+                    Missing = maps:put(MsgId, {Timer, [{Sender, Round} | List]}, Tree#?STATE.missing),
+                    {ok, Tree#?STATE{missing = Missing}};
+                _ ->
+                    IhaveTimeout = 1000, % TODO
+                    Timer = erlang:send_after(IhaveTimeout, self(), {ihave_timeout, MsgId}),
+                    Missing = maps:put(MsgId, {Timer, [{Sender, Round}]}, Tree#?STATE.missing),
+                    {ok, Tree#?STATE{missing = Missing}}
+            end
+    end.
+
+-spec handle_prune(pid(), tree()) -> {ok, tree()}.
+handle_prune(Sender, Tree0) ->
+    Tree1 = add_lazy(Sender, remove_eager(Sender, Tree0)),
+    {ok, Tree1}.
+
+-spec optimize(maps:map(), msg_id(), round(), pid(), tree()) -> tree().
+optimize(_, _, _, _, Tree) ->
+    Tree.
+
+-spec eager_push(msg_id(), term(), round(), pid(), tree()) -> tree().
+eager_push(MsgId, Message, Round, Sender, Tree) ->
+    ok = lists:foreach(
+           fun (Pid) ->
+                   Pid =/= Sender andalso
+                       begin
+                           Pid ! {'GOSSIP', {MsgId, Message, Round, self()}}
+                       end
+           end,
+           Tree#?STATE.eager_push_peers),
+    Tree.
+
+-spec lazy_push(msg_id(), term(), round(), pid(), tree()) -> tree().
+lazy_push(MsgId, Message, Round, Sender, Tree) ->
+    Queue =
+        lists:foldl(
+          fun (Pid, Acc) when Pid =:= Sender ->
+                  Acc;
+              (Pid, Acc) ->
+                  [{'IHAVE', Pid, MsgId, Message, Round, self()} | Acc]
+          end,
+          Tree#?STATE.lazy_queue,
+          Tree#?STATE.lazy_push_peers),
+    dispatch(Tree#?STATE{lazy_queue = Queue}).
+
+-spec dispatch(tree()) -> tree().
+dispatch(Tree) ->
+    %% TODO: piggy back on an application message
+    ok = lists:foreach(
+           fun ({'IHAVE', Pid, MsgId, _, Round, Sender}) ->
+                   Pid ! {'IHAVE', {MsgId, Round, Sender}}
+           end,
+           Tree#?STATE.lazy_queue),
+    Tree#?STATE{lazy_queue = []}.
+
+-spec deliver(msg_id(), term(), tree()) -> tree().
+deliver(MsgId, Message, Tree) ->
+    _ = Tree#?STATE.destination ! Message,
+    Receives = maps:put(MsgId, Message, Tree#?STATE.receives),
+    Tree#?STATE{receives = Receives}.
+
+-spec add_eager(pid(), tree()) -> tree().
+add_eager(Peer, Tree) ->
+    case lists:member(Peer, Tree#?STATE.eager_push_peers) of
+        true  -> Tree;
+        false -> Tree#?STATE{eager_push_peers = [Peer | Tree#?STATE.eager_push_peers]}
+    end.
+
+-spec remove_eager(pid(), tree()) -> tree().
+remove_eager(Peer, Tree) ->
+    Tree#?STATE{eager_push_peers = lists:delete(Peer, Tree#?STATE.eager_push_peers)}.
+
+-spec add_lazy(pid(), tree()) -> tree().
+add_lazy(Peer, Tree) ->
+    case lists:member(Peer, Tree#?STATE.lazy_push_peers) of
+        true  -> Tree;
+        false -> Tree#?STATE{lazy_push_peers = [Peer | Tree#?STATE.lazy_push_peers]}
+    end.
+
+-spec remove_lazy(pid(), tree()) -> tree().
+remove_lazy(Peer, Tree) ->
+    Tree#?STATE{lazy_push_peers = lists:delete(Peer, Tree#?STATE.lazy_push_peers)}.
