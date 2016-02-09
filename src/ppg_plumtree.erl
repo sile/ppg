@@ -109,19 +109,17 @@ handle_gossip({MsgId, Message, Round, Sender}, Tree0) ->
             Tree1 = deliver(MsgId, Message, Tree0),
             Tree2 =
                 case Tree1#?STATE.missing of
-                    #{MsgId := {Timer, _}} ->
+                    #{MsgId := {Timer, IhaveList}} ->
                         _ = erlang:cancel_timer(Timer),
-                        Tree1#?STATE{missing = maps:remove(MsgId, Tree1#?STATE.missing)};
+                        Missing = maps:remove(MsgId, Tree1#?STATE.missing),
+                        optimize(IhaveList, Round, Sender, Tree1#?STATE{missing = Missing});
                     _ ->
                         Tree1
                 end,
             Tree3 = eager_push(MsgId, Message, Round + 1, Sender, Tree2),
             Tree4 = lazy_push(MsgId, Message, Round + 1, Sender, Tree3),
             Tree5 = add_eager(Sender, remove_lazy(Sender, Tree4)),
-
-            OldMissing = Tree1#?STATE.missing,
-            Tree6 = optimize(OldMissing, MsgId, Round, Sender, Tree5),
-            {ok, Tree6}
+            {ok, Tree5}
     end.
 
 -spec handle_ihave({msg_id(), round(), pid()}, tree()) -> {ok, tree()}.
@@ -172,9 +170,18 @@ handle_prune(Sender, Tree0) ->
     Tree1 = add_lazy(Sender, remove_eager(Sender, Tree0)),
     {ok, Tree1}.
 
--spec optimize(maps:map(), msg_id(), round(), pid(), tree()) -> tree().
-optimize(_, _, _, _, Tree) ->
-    Tree.
+-spec optimize(list(), round(), pid(), tree()) -> tree().
+optimize([], _Round, _Sender, Tree) ->
+    Tree;
+optimize([{IhaveSender, IhaveRound} | Rest], GossipRound, GossipSender, Tree) ->
+    Threshold = 4, % TODO:
+    case GossipRound - IhaveRound > Threshold of
+        false -> optimize(Rest, GossipRound, GossipSender, Tree);
+        true  ->
+            _ = IhaveSender ! {'GRAFT', {make_ref(), IhaveRound, self()}},
+            _ = GossipSender ! {'PRUNE', self()},
+            Tree
+    end.
 
 -spec eager_push(msg_id(), term(), round(), pid(), tree()) -> tree().
 eager_push(MsgId, Message, Round, Sender, Tree) ->
