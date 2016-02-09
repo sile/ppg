@@ -10,6 +10,7 @@
 -export([new/2]).
 -export([broadcast/2]).
 -export([handle_info/2]).
+-export([get_entry/1]).
 
 -export_type([tree/0]).
 
@@ -51,6 +52,13 @@ broadcast(Message, Tree0) ->
     Tree1 = eager_push(MsgId, Message, 0, self(), Tree0),
     Tree2 = lazy_push(MsgId, Message, 0, self(), Tree1),
     deliver(MsgId, Message, Tree2).
+
+-spec get_entry(tree()) -> Todo::term().
+get_entry(Tree) ->
+    Edges =
+        [{eager, P} || P <- Tree#?STATE.eager_push_peers] ++
+        [{lazy, P} || P <- Tree#?STATE.lazy_push_peers],
+    {self(), Tree#?STATE.destination, Edges}.
 
 -spec handle_info(term(), tree()) -> {ok, tree()} | ignore | {error, term()}.
 handle_info({'GOSSIP', Arg}, Tree) ->
@@ -190,7 +198,7 @@ eager_push(MsgId, Message, Round, Sender, Tree) ->
                    Pid =/= Sender andalso
                        begin
                            %% for debug
-                           timer:sleep(rand:uniform(500)),
+                           %% timer:sleep(rand:uniform(500)),
                            Pid ! {'GOSSIP', {MsgId, Message, Round, self()}}
                        end
            end,
@@ -222,7 +230,12 @@ dispatch(Tree) ->
 
 -spec deliver(msg_id(), term(), tree()) -> tree().
 deliver(MsgId, Message, Tree) ->
-    _ = Tree#?STATE.destination ! Message,
+    _ = case Message of
+            {'SYSTEM', get_graph, {Ref, From}} -> % TODO:
+                From ! {Ref, get_entry(Tree)};
+            _ ->
+                Tree#?STATE.destination ! Message
+        end,
     Receives = maps:put(MsgId, Message, Tree#?STATE.receives),
     Tree#?STATE{receives = Receives}.
 

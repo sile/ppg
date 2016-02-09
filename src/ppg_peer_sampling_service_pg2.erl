@@ -3,6 +3,8 @@
 %% @doc The pg2 implemntation of ppg_peer_sampling_service interface
 %%
 %% NOTICE: This module is provided only for debugging purposes.
+%%
+%% 接続関係に対称性がないし、いろいろとテキトウなのでhyparviewに対応したら削除する
 -module(ppg_peer_sampling_service_pg2).
 
 -behaviour(ppg_peer_sampling_service).
@@ -98,7 +100,8 @@ handle_member_check(State0) ->
     Num = 5, % TODO:
     Monitors0 = State0#?STATE.monitors,
     Monitors1 =
-        case maps:values(Monitors0) -- pg2:get_members(State0#?STATE.pg2_group) of
+        case lists:usort((maps:values(Monitors0) -- pg2:get_members(State0#?STATE.pg2_group)) ++
+                             try lists:nthtail(Num, shuffle(maps:values(Monitors0))) catch _:_ -> [] end) of
             []        -> Monitors0;
             LeftPeers ->
                 lists:foldl(

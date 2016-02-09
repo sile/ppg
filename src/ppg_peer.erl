@@ -189,6 +189,7 @@ handle_broadcast(Message, State) ->
     {reply, ok, State#?STATE{tree = Tree}}.
 
 -spec handle_get_graph({reference(), pid()}, #?STATE{}) -> {reply, Todo::term(), #?STATE{}}.
-handle_get_graph(_Requestor, State) ->
-    Entry = {self(), State#?STATE.destination, []},
-    {reply, Entry, State}.
+handle_get_graph(Requestor, State) ->
+    Tree = ppg_plumtree:broadcast({'SYSTEM', get_graph, Requestor}, State#?STATE.tree),
+    Entry = ppg_plumtree:get_entry(Tree),
+    {reply, Entry, State#?STATE{tree = Tree}}.
