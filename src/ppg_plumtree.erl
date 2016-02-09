@@ -78,9 +78,21 @@ handle_neighbor_up(Peer, Tree) ->
             {ok, Tree#?STATE{eager_push_peers = EagerPeers}}
     end.
 
-%-spec handle_neighbor_down(pid(), tree()) -> {ok, tree()}.
-handle_neighbor_down(_Peer, _Tree) ->
-    {error, unimplemented}.
+-spec handle_neighbor_down(pid(), tree()) -> {ok, tree()}.
+handle_neighbor_down(Peer, Tree0) ->
+    Tree1 = remove_eager(Peer, remove_lazy(Peer, Tree0)),
+    Missing =
+        maps:filter(
+          fun (_, {Timer, List}) ->
+                  _ = List =:= [] andalso erlang:cancel_timer(Timer),
+                  List =/= []
+          end,
+          maps:map(
+            fun (_, {Timer, List}) ->
+                    {Timer, lists:filter(fun ({Pid, _}) -> Pid =/= Peer end, List)}
+            end,
+            Tree1#?STATE.missing)),
+    {ok, Tree1#?STATE{missing = Missing}}.
 
 -spec handle_gossip({msg_id(), term(), round(), pid()}, tree()) -> {ok, tree()}.
 handle_gossip({MsgId, Message, Round, Sender}, Tree0) ->
