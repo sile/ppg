@@ -137,6 +137,7 @@ handle_cast(_Request, State) ->
 
 %% @private
 handle_info(Info, State) ->
+    io:format("# [~p] ~w\n", [self(), Info]),
     case ppg_peer_sampling_service:handle_info(Info, State#?STATE.pss) of
         {ok, Pss}       -> {noreply, State#?STATE{pss = Pss}};
         {error, Reason} -> {stop, Reason, State};

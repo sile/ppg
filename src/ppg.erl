@@ -42,12 +42,14 @@
 -spec default_join_options() -> join_options().
 default_join_options() ->
     [
-     {contact_process_count, 5}
+     %% {contact_process_count, 3} % TODO:
+     {contact_process_count, 1}
     ].
 
 -spec default_peer_sampling_service() -> ppg_peer_sampling_service:instance().
 default_peer_sampling_service() ->
-    ppg_peer_sampling_service_pg2:new().
+    %% ppg_peer_sampling_service_pg2:new().
+    ppg_peer_sampling_service_hyparview:new().
 
 -spec create(name()) -> ok.
 create(Group) ->

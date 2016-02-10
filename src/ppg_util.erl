@@ -11,6 +11,8 @@
 -export([is_local_pid/1]).
 -export([proplist_to_record/3]).
 -export([function_exported/3]).
+-export([delete_random/1]).
+-export([select_random/1]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -27,7 +29,7 @@ proplist_to_record(RecordName, Fields, List) ->
       [RecordName |
        [case lists:keyfind(Field, 1, List) of
             false      -> error(badarg, [RecordName, Fields, List]);
-            {_, Value} -> {Field, Value}
+            {_, Value} -> Value
         end || Field <- Fields]]).
 
 %% @doc Equivalent to {@link erlang:function_exported/3} except `Module' will be loaded if it has not been loaded
@@ -38,3 +40,13 @@ function_exported(Module, Function, Arity) ->
     _ = (is_integer(Arity) andalso Arity >= 0) orelse error(badarg, [Module, Function, Arity]),
     _ = code:is_loaded(Module) =/= false orelse code:load_file(Module),
     erlang:function_exported(Module, Function, Arity).
+
+-spec delete_random(list()) -> {term(), list()}.
+delete_random(List) ->
+    I = rand:uniform(length(List)) - 1,
+    {Front, [Deleted | Rear]} = lists:split(I, List),
+    {Deleted, Front ++ Rear}.
+
+-spec select_random(list()) -> term().
+select_random(List) ->
+    lists:nth(rand:uniform(length(List)), List).
