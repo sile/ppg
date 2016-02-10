@@ -25,8 +25,8 @@
           eager_push_peers = [] :: [pid()],
           lazy_push_peers = [] :: [pid()],
           lazy_queue = [] :: list(),
-          missing = #{} :: maps:map(),
-          receives = #{} :: maps:map()
+          missing = #{} :: #{},
+          receives = #{} :: #{}
         }).
 
 -opaque tree() :: #?STATE{}.
@@ -60,7 +60,7 @@ get_entry(Tree) ->
         [{lazy, P} || P <- Tree#?STATE.lazy_push_peers],
     {self(), Tree#?STATE.destination, Edges}.
 
--spec handle_info(term(), tree()) -> {ok, tree()} | ignore | {error, term()}.
+-spec handle_info(term(), tree()) -> {ok, tree()} | ignore.
 handle_info({'GOSSIP', Arg}, Tree) ->
     handle_gossip(Arg, Tree);
 handle_info({'IHAVE', Arg}, Tree) ->

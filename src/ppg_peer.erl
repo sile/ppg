@@ -142,9 +142,8 @@ handle_info(Info, State) ->
         {error, Reason} -> {stop, Reason, State};
         ignore          ->
             case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
-                {ok, Tree}      -> {noreply, State#?STATE{tree = Tree}};
-                {Error, Reason} -> {stop, Reason, State};
-                ignore          ->
+                {ok, Tree} -> {noreply, State#?STATE{tree = Tree}};
+                ignore     ->
                     case Info of
                         {'DOWN', _, _, Pid, _} when Pid =:= State#?STATE.destination ->
                             {stop, normal, State};
