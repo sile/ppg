@@ -83,8 +83,8 @@ get_graph(Peer, Timeout) ->
                   Ref1 = make_ref(),
                   From = {Ref1, self()},
                   _ = Timeout =:= infinity orelse erlang:send_after(Timeout, self(), timeout),
-                  Entry = gen_server:call(Peer, {get_graph, From}),
-                  Graph = build_graph([Entry], Ref1),
+                  ok = gen_server:cast(Peer, {get_graph, From}),
+                  Graph = build_graph([], Ref1),
                   Parent ! {Ref0, Graph}
           end),
     receive
@@ -126,12 +126,12 @@ handle_call({broadcast, Arg}, _From, State) ->
     handle_broadcast(Arg, State);
 handle_call(get_destination, _From, State) ->
     {reply, State#?STATE.destination, State};
-handle_call({get_graph, Arg}, _From, State) ->
-    handle_get_graph(Arg, State);
 handle_call(_Request, _From, State) ->
     {noreply, State}.
 
 %% @private
+handle_cast({get_graph, Arg}, State) ->
+    handle_get_graph(Arg, State);
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -143,7 +143,7 @@ handle_info(Info, State) ->
         ignore          ->
             case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
                 {ok, Tree}      -> {noreply, State#?STATE{tree = Tree}};
-                {error, Reason} -> {stop, Reason, State};
+                {Error, Reason} -> {stop, Reason, State};
                 ignore          ->
                     case Info of
                         {'DOWN', _, _, Pid, _} when Pid =:= State#?STATE.destination ->
@@ -188,8 +188,7 @@ handle_broadcast(Message, State) ->
     Tree = ppg_plumtree:broadcast(Message, State#?STATE.tree),
     {reply, ok, State#?STATE{tree = Tree}}.
 
--spec handle_get_graph({reference(), pid()}, #?STATE{}) -> {reply, Todo::term(), #?STATE{}}.
+-spec handle_get_graph({reference(), pid()}, #?STATE{}) -> {noreply, #?STATE{}}.
 handle_get_graph(Requestor, State) ->
     Tree = ppg_plumtree:broadcast({'SYSTEM', get_graph, Requestor}, State#?STATE.tree),
-    Entry = ppg_plumtree:get_entry(Tree),
-    {reply, Entry, State#?STATE{tree = Tree}}.
+    {noreply, State#?STATE{tree = Tree}}.

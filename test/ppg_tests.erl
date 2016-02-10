@@ -89,6 +89,7 @@ broadcast_test_() ->
         fun () ->
                 ok = ppg:join(Group, self()),
                 ok = ppg:join(Group, self()),
+                timer:sleep(3000), % TODO: delete
 
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
