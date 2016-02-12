@@ -17,6 +17,9 @@
 -export([get_destination/1]).
 -export([broadcast/2]).
 
+-export_type([peer/0]).
+-export_type([contact_peer/0]).
+
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'gen_server' Callback API
 %%----------------------------------------------------------------------------------------------------------------------
@@ -38,10 +41,13 @@
         {
           group :: ppg:name(),
           destination :: pid(),
-          pss :: ppg_peer_sampling_service:instance(),
+          view :: ppg_hyparview:view(),
           tree :: ppg_plumtree:tree(),
           opt :: #opt{}
         }).
+
+-type peer() :: pid().
+-type contact_peer() :: peer().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -105,16 +111,15 @@ init([Group, Destination, Options]) ->
             _ = monitor(process, Destination),
 
             ContactPeer = pg2:get_closest_pid(?PG2_NAME(Group)),
-            Pss0 = proplists:get_value(peer_sampling_service, Options, ppg:default_peer_sampling_service()),
-            Pss1 = ppg_peer_sampling_service:join(ContactPeer, Pss0),
-            {Peers, Pss2} = ppg_peer_sampling_service:get_peers(Pss1),
-            Tree = ppg_plumtree:new(Destination, Peers),
+            View0 = ppg_hyparview:new(),
+            View1 = ppg_hyparview:join(ContactPeer, View0),
+            Tree = ppg_plumtree:new(Destination, ppg_hyparview:get_peers(View1)),
 
             State =
                 #?STATE{
                     group = Group,
                     destination = Destination,
-                    pss = Pss2,
+                    view = View1,
                     tree = Tree,
                     opt = Opt
                    },
@@ -138,10 +143,9 @@ handle_cast(_Request, State) ->
 %% @private
 handle_info(Info, State) ->
     io:format("# [~p] ~w\n", [self(), Info]),
-    case ppg_peer_sampling_service:handle_info(Info, State#?STATE.pss) of
-        {ok, Pss}       -> {noreply, State#?STATE{pss = Pss}};
-        {error, Reason} -> {stop, Reason, State};
-        ignore          ->
+    case ppg_hyparview:handle_info(Info, State#?STATE.view) of
+        {ok, View} -> {noreply, State#?STATE{view = View}};
+        ignore     ->
             case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
                 {ok, Tree} -> {noreply, State#?STATE{tree = Tree}};
                 ignore     ->

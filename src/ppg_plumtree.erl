@@ -11,6 +11,8 @@
 -export([broadcast/2]).
 -export([handle_info/2]).
 -export([get_entry/1]).
+-export([notify_neighbor_up/1]).
+-export([notify_neighbor_down/1]).
 
 -export_type([tree/0]).
 
@@ -52,6 +54,16 @@ broadcast(Message, Tree0) ->
     Tree1 = eager_push(MsgId, Message, 0, self(), Tree0),
     Tree2 = lazy_push(MsgId, Message, 0, self(), Tree1),
     deliver(MsgId, Message, Tree2).
+
+-spec notify_neighbor_up(ppg_peer:peer()) -> ok.
+notify_neighbor_up(Peer) ->
+    _ = self() ! {'NEIGHBOR_UP', Peer},
+    ok.
+
+-spec notify_neighbor_down(ppg_peer:peer()) -> ok.
+notify_neighbor_down(Peer) ->
+    _ = self() ! {'NEIGHBOR_DOWN', Peer},
+    ok.
 
 -spec get_entry(tree()) -> Todo::term().
 get_entry(Tree) ->

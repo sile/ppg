@@ -7,7 +7,6 @@
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
 -export([default_join_options/0]).
--export([default_peer_sampling_service/0]).
 
 -export([create/1]).
 -export([delete/1]).
@@ -45,11 +44,6 @@ default_join_options() ->
      %% {contact_process_count, 3} % TODO:
      {contact_process_count, 1}
     ].
-
--spec default_peer_sampling_service() -> ppg_peer_sampling_service:instance().
-default_peer_sampling_service() ->
-    %% ppg_peer_sampling_service_pg2:new().
-    ppg_peer_sampling_service_hyparview:new().
 
 -spec create(name()) -> ok.
 create(Group) ->
