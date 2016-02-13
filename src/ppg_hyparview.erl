@@ -1,8 +1,6 @@
 %% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
 %%
 %% @doc TODO
-%%
-%% TODO: shuffle
 -module(ppg_hyparview).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -238,30 +236,22 @@ handle_foreigner(Peer, View0) ->
     end.
 
 -spec handle_shuffle({[ppg_peer:peer()], pos_integer(), ppg_peer:peer()}, view()) -> view().
-handle_shuffle({Peers, TimeToLive, Sender}, View0) ->
-    NextCandidates = maps:remove(hd(Peers), maps:remove(Sender, View0#?VIEW.active_view)),
+handle_shuffle({Peers, TimeToLive, Sender}, View) ->
+    NextCandidates = maps:remove(hd(Peers), maps:remove(Sender, View#?VIEW.active_view)),
     case TimeToLive > 0 andalso maps:size(NextCandidates) > 0 of
         true ->
             Next = ppg_util:random_select_key(NextCandidates),
             _ = Next ! message_shuffle(Peers, TimeToLive - 1),
-            View0;
+            View;
         false ->
-            ReplyPeers = ppg_util:random_select_keys(length(Peers), View0#?VIEW.passive_view),
+            ReplyPeers = ppg_util:random_select_keys(length(Peers), View#?VIEW.passive_view),
             _ = hd(Peers) ! message_shufflereply(ReplyPeers),
-
-            Peers1 = Peers -- maps:keys(View0#?VIEW.active_view),
-            View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)},
-            View2 = ensure_passive_view_free_space(length(Peers1), View1),
-            View2#?VIEW{passive_view = lists:foldl(fun (P, Acc) -> maps:put(P, make_ref(), Acc) end, View2#?VIEW.passive_view, Peers1)}
+            add_peers_to_passive_view(Peers, View)
     end.
 
 -spec handle_shufflereply([ppg_peer:peer()], view()) -> view().
-handle_shufflereply(Peers0, View0) ->
-    %% TODO: コード統合
-    Peers1 = Peers0 -- maps:keys(View0#?VIEW.active_view),
-    View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)},
-    View2 = ensure_passive_view_free_space(length(Peers1), View1),
-    View2#?VIEW{passive_view = lists:foldl(fun (P, Acc) -> maps:put(P, make_ref(), Acc) end, View2#?VIEW.passive_view, Peers1)}.
+handle_shufflereply(Peers, View) ->
+    add_peers_to_passive_view(Peers, View).
 
 -spec add_peer_to_active_view(ppg_peer:peer(), boolean(), view()) -> view().
 add_peer_to_active_view(Peer, IsActiveConnect, View0) ->
@@ -274,18 +264,16 @@ add_peer_to_active_view(Peer, IsActiveConnect, View0) ->
     end.
 
 -spec add_peer_to_passive_view(ppg_peer:peer(), view()) -> view().
-add_peer_to_passive_view(Peer, View0) ->
-    DoesExist =
-        Peer =:= self() orelse
-        maps:is_key(Peer, View0#?VIEW.active_view) orelse
-        maps:is_key(Peer, View0#?VIEW.passive_view),
-    case DoesExist of
-        true  -> View0;
-        false ->
-            View1 = ensure_passive_view_free_space(1, View0),
-            PassiveView = maps:put(Peer, make_ref(), View1#?VIEW.passive_view),
-            View1#?VIEW{passive_view = PassiveView}
-    end.
+add_peer_to_passive_view(Peer, View) ->
+    add_peers_to_passive_view([Peer], View).
+
+-spec add_peers_to_passive_view([ppg_peer:peer()], view()) -> view().
+add_peers_to_passive_view(Peers0, View0) ->
+    Peers1 = Peers0 -- [self() | maps:keys(View0#?VIEW.active_view)],
+    View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)},
+    View2 = ensure_passive_view_free_space(length(Peers1), View1),
+    PassiveView = lists:foldl(fun (P, Acc) -> maps:put(P, make_ref(), Acc) end, View2#?VIEW.passive_view, Peers1),
+    View2#?VIEW{passive_view = PassiveView}.
 
 -spec ensure_active_view_free_space(view()) -> view().
 ensure_active_view_free_space(View0) ->
@@ -366,7 +354,8 @@ message_neighbor(#?VIEW{active_view = ActiveView}) ->
 -spec message_foreigner() -> {?TAG_FOREIGNER, ppg_peer:peer()}.
 message_foreigner() -> {?TAG_FOREIGNER, self()}.
 
--spec message_shuffle([ppg_peer:peer()], pos_integer()) -> {?TAG_SHUFFLE, {[ppg_peer:peer()], pos_integer(), ppg_peer:peer()}}.
+-spec message_shuffle(Peers, pos_integer()) -> {?TAG_SHUFFLE, {Peers, pos_integer(), ppg_peer:peer()}} when
+      Peers :: [ppg_peer:peer()].
 message_shuffle(Peers, TimeToLive) -> {?TAG_SHUFFLE, {Peers, TimeToLive, self()}}.
 
 -spec message_shufflereply([ppg_peer:peer()]) -> {?TAG_SHUFFLEREPLY, [ppg_peer:peer()]}.
