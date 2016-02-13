@@ -7,10 +7,10 @@
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
 -export([guess_options/1]).
--export([new/0, new/1]).
+-export([new/1, new/2]).
 -export([is_view/1]).
 
--export([join/2]).
+-export([join/1]).
 -export([get_peers/1]).
 -export([handle_info/2]).
 
@@ -46,19 +46,17 @@
         {
           %% Dynamic Fields
           active_view = #{}          :: #{ppg_peer:peer() => Monitor::reference()},
-          passive_view = #{}         :: #{ppg_peer:peer() => Monitor::reference()}, % TODO: note (dummy or monitor_if_promoting)
+          passive_view = #{}         :: #{ppg_peer:peer() => Monitor::(reference() | ok)}, % TODO: note (dummy or monitor_if_promoting)
           shuffle_timer = make_ref() :: reference(),
 
           %% Static Fields
+          group                      :: ppg:name(),
           active_view_size           :: pos_integer(),
           passive_view_size          :: pos_integer(),
           active_random_walk_length  :: pos_integer(),
           passive_random_walk_length :: pos_integer(),
           shuffle_count              :: pos_integer(),
-          shuffle_interval           :: timeout(),
-
-          %% XXX
-          contact_peer :: pid() | undefined
+          shuffle_interval           :: timeout()
         }).
 
 -opaque view() :: #?VIEW{}.
@@ -94,13 +92,13 @@ guess_options(GroupSizeHint) ->
      {shuffle_interval, ShuffleInterval}
     ].
 
-%% @equiv new(guess_options(100))
--spec new() -> view().
-new() ->
-    new(guess_options(100)).
+%% @equiv new(Group, guess_options(100))
+-spec new(ppg:name()) -> view().
+new(Group) ->
+    new(Group, guess_options(100)).
 
--spec new(options()) -> view().
-new(Options0) ->
+-spec new(ppg:name(), options()) -> view().
+new(Group, Options0) ->
     _ = is_list(Options0) orelse error(badarg, [Options0]),
     Options1 = Options0 ++ guess_options(100),
 
@@ -112,6 +110,7 @@ new(Options0) ->
         end,
     View0 =
         #?VIEW{
+            group = Group,
             active_view_size = Get(active_view_size, fun ppg_util:is_pos_integer/1),
             passive_view_size = Get(passive_view_size, fun ppg_util:is_pos_integer/1),
             active_random_walk_length = Get(active_random_walk_length, fun ppg_util:is_pos_integer/1),
@@ -128,10 +127,11 @@ is_view(X) -> is_record(X, ?VIEW).
 -spec get_peers(view()) -> [ppg_peer:peer()].
 get_peers(#?VIEW{active_view = View}) -> maps:keys(View).
 
--spec join(ppg_peer:contact_peer(), view()) -> view().
-join(ContactPeer, View) ->
-    _ = ContactPeer ! message_join(),
-    View#?VIEW{contact_peer = ContactPeer}.
+-spec join(view()) -> view().
+join(View) ->
+    ContactPeer = get_contact_peer(View),
+    _ = ContactPeer =/= self() andalso (ContactPeer ! message_join()),
+    View.
 
 -spec handle_info(term(), view()) -> {ok, view()} | ignore.
 handle_info({?TAG_JOIN,         Arg}, View) -> {ok, handle_join(Arg, View)};
@@ -143,6 +143,8 @@ handle_info({?TAG_FOREIGNER,    Arg}, View) -> {ok, handle_foreigner(Arg, View)}
 handle_info({?TAG_SHUFFLE,      Arg}, View) -> {ok, handle_shuffle(Arg, View)};
 handle_info({?TAG_SHUFFLEREPLY, Arg}, View) -> {ok, handle_shufflereply(Arg, View)};
 handle_info({'DOWN', Ref, _, Pid, _}, View) ->
+    %% TODO:
+    _ = get_contact_peer(View),
     case View of
         #?VIEW{active_view  = #{Pid := Ref}} -> {ok, handle_disconnect(Pid, true, View)};
         #?VIEW{passive_view = #{Pid := Ref}} -> {ok, handle_foreigner(Pid, View)};
@@ -274,8 +276,13 @@ add_peer_to_passive_view(Peer, View) ->
 add_peers_to_passive_view(Peers0, View0) ->
     Peers1 = Peers0 -- [self() | maps:keys(View0#?VIEW.active_view)],
     View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)},
+
+    %% TODO: 整理
+    ok = lists:foreach(fun (M) -> my_demonitor(M, [flush]) end,
+                       maps:values(maps:with(Peers1, View0#?VIEW.passive_view))),
+
     View2 = ensure_passive_view_free_space(length(Peers1), View1),
-    PassiveView = lists:foldl(fun (P, Acc) -> maps:put(P, make_ref(), Acc) end, View2#?VIEW.passive_view, Peers1),
+    PassiveView = lists:foldl(fun (P, Acc) -> maps:put(P, ok, Acc) end, View2#?VIEW.passive_view, Peers1),
     View2#?VIEW{passive_view = PassiveView}.
 
 -spec ensure_active_view_free_space(view()) -> view().
@@ -304,7 +311,7 @@ ensure_passive_view_free_space(Room, View) ->
         true  -> View;
         false ->
             {{_, Monitor}, PassiveView} = ppg_util:random_pop(View#?VIEW.passive_view),
-            _ = demonitor(Monitor, [flush]),
+            _ = my_demonitor(Monitor, [flush]),
             ensure_passive_view_free_space(1, View#?VIEW{passive_view = PassiveView})
     end.
 
@@ -313,26 +320,50 @@ connect_to_peer(Peer, IsActiveConnect, View) ->
     _ = IsActiveConnect andalso (Peer ! message_connect()),
     ok = ppg_plumtree:notify_neighbor_up(Peer),
     Monitor = monitor(process, Peer),
+    io:format("MONITOR: [~p] ~p:~p\n", [self(), Peer, Monitor]),
     ActiveView = maps:put(Peer, Monitor, View#?VIEW.active_view),
     remove_passive_peer(Peer, View#?VIEW{active_view = ActiveView}).
 
 -spec promote_passive_peer(view()) -> view().
-promote_passive_peer(View = #?VIEW{passive_view = Passive}) when Passive =:= #{} ->
-    ContactPeer =View#?VIEW.contact_peer, % TODO: Add handling of a case in which there is no concat peer
-    case View#?VIEW.active_view =:= #{} andalso ContactPeer =/= self() of
-        false -> View;
-        true  -> join(ContactPeer, View)
-    end;
 promote_passive_peer(View) ->
-    Peer = ppg_util:random_select_key(View#?VIEW.passive_view),
-    _ = Peer ! message_neighbor(View),
-    PassiveView = maps:put(Peer, monitor(process, Peer), View#?VIEW.passive_view),
-    View#?VIEW{passive_view = PassiveView}.
+    PassiveView0 = maps:filter(fun (_, V) -> V =:= ok end, View#?VIEW.passive_view),
+    case maps:size(PassiveView0) =:= 0 of
+        true ->
+            case View#?VIEW.active_view =:= #{} of
+                false -> View;
+                true  -> join(View)
+            end;
+        false ->
+            Peer = ppg_util:random_select_key(PassiveView0),
+            _ = Peer ! message_neighbor(View),
+            Monitor = monitor(process, Peer),
+            io:format("MONITOR: [~p] ~p:~p\n", [self(), Peer, Monitor]),
+            PassiveView = maps:put(Peer, Monitor, View#?VIEW.passive_view),
+            View#?VIEW{passive_view = PassiveView}
+    end.
 
 -spec remove_passive_peer(ppg_peer:peer(), view()) -> view().
 remove_passive_peer(Peer, View = #?VIEW{passive_view = PassiveView}) ->
-    _ = demonitor(maps:get(Peer, PassiveView, make_ref()), [flush]),
+    io:format("REMOVE: [~p] ~p:~p\n", [self(), Peer, maps:get(Peer, PassiveView, non)]),
+    _ = my_demonitor(maps:get(Peer, PassiveView, make_ref()), [flush]),
     View#?VIEW{passive_view = maps:remove(Peer, PassiveView)}.
+
+%% TODO:
+-spec my_demonitor(reference() | ok, term()) -> term().
+my_demonitor(ok, _) ->
+    ok;
+my_demonitor(Ref, Opts) ->
+    demonitor(Ref, Opts).
+
+-spec get_contact_peer(view()) -> ppg_peer:peer().
+get_contact_peer(View) ->
+    Name = {?MODULE, contact_peer, View#?VIEW.group},
+    case global:whereis_name(Name) of
+        Peer when is_pid(Peer) -> Peer;
+        undefined              ->
+            global:register_name(Name, self()),
+            get_contact_peer(View)
+    end.
 
 -spec message_join() -> {?TAG_JOIN, NewPeer::ppg_peer:peer()}.
 message_join() -> {?TAG_JOIN, self()}.

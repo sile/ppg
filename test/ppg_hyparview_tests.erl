@@ -7,15 +7,16 @@
 %% Unit Tests
 %%----------------------------------------------------------------------------------------------------------------------
 new_test_() ->
+    Group = foo,
     [
      {"Creates an instance",
       fun () ->
-              View = ppg_hyparview:new(),
+              View = ppg_hyparview:new(Group),
               ?assert(ppg_hyparview:is_view(View))
       end},
      {"The initial view is empty",
       fun () ->
-              View = ppg_hyparview:new(),
+              View = ppg_hyparview:new(Group),
               ?assertEqual([], ppg_hyparview:get_peers(View))
       end}
     ].

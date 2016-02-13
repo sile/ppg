@@ -9,6 +9,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -export([child_spec/0]).
 -export([otp_name/1]).
+-export([whereis_name/1]).
 -export([which_processes/1]).
 
 -export_type([raw_name/0]).
@@ -30,6 +31,10 @@ child_spec() ->
 -spec otp_name(raw_name()) -> local:otp_name().
 otp_name(Name) ->
     local:otp_name({?NS_NAME, Name}).
+
+-spec whereis_name(raw_name()) -> pid() | undefined.
+whereis_name(Name) ->
+    local:whereis_name({?NS_NAME, Name}).
 
 -spec which_processes(ets:match_pattern()) -> [{raw_name(), pid()}].
 which_processes(Pattern) ->

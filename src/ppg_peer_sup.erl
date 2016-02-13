@@ -9,11 +9,10 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([start_link/0]).
--export([start_child/3]).
--export([get_random_child/1]).
--export([which_children/1]).
--export([select_children_by_destination/2]).
+-export([start_link/1]).
+-export([push_member/2]).
+-export([pop_member/2]).
+-export([get_peer/2]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'supervisor' Callback API
@@ -23,29 +22,33 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec start_link() -> {ok, pid()} | {error, Reason::term()}.
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+-spec start_link(ppg:name()) -> {ok, pid()} | {error, Reason} when
+      Reason :: {already_started, pid()} | term().
+start_link(Group) ->
+    supervisor:start_link(sup_name(Group), ?MODULE, []).
 
--spec start_child(ppg:name(), pid(), ppg:join_options()) -> {ok, pid()} | {error, {no_such_group, ppg:name()}}.
-start_child(Group, Destination, Options) ->
-    Name = ppg_local_ns:otp_name({peer, Group, Destination, erlang:unique_integer()}),
-    supervisor:start_child(?MODULE, [Name, Group, Destination, Options]).
+%% NOTE: This function is executed by `Member' (i.e., serialized)
+-spec push_member(ppg:name(), ppg:member()) -> {ok, pid()} | {error, Reason::term()}.
+push_member(Group, Member) ->
+    Count = length(ppg_local_ns:which_processes({peer, Group, Member, '_'})),
+    Name = ppg_local_ns:otp_name({peer, Group, Member, Count}),
+    supervisor:start_child(sup_name(Group), [Name, Group, Member]).
 
--spec get_random_child(ppg:name()) -> pid() | undefined.
-get_random_child(Group) ->
-    case [Pid || {_, Pid} <- ppg_local_ns:which_processes({peer, Group, '_', '_'})] of
-        []    -> undefined;
-        Peers -> lists:nth(rand:uniform(length(Peers)), Peers)
+%% NOTE: This function is executed by `Member' (i.e., serialized)
+-spec pop_member(ppg:name(), ppg:member()) -> ok.
+pop_member(Group, Member) ->
+    %% TODO: assert(Count > 0)
+    Count = length(ppg_local_ns:which_processes({peer, Group, Member, '_'})),
+    Name = ppg_local_ns:otp_name({peer, Group, Member, Count - 1}),
+    ok = ppg_peer:stop(Name),
+    ok.
+
+-spec get_peer(ppg:name(), ppg:member()) -> pid().
+get_peer(Group, Member) ->
+    case ppg_local_ns:whereis_name({peer, Group, Member, 0}) of
+        undefined -> error(badarg, [Group, Member]);
+        Peer      -> Peer
     end.
-
--spec which_children(ppg:name()) -> [{Peer::pid(), Destination::pid()}].
-which_children(Group) ->
-    [{Peer, Destination} || {{_, _, Destination, _}, Peer} <- ppg_local_ns:which_processes({peer, Group, '_', '_'})].
-
--spec select_children_by_destination(ppg:name(), pid()) -> [pid()].
-select_children_by_destination(Group, Destination) ->
-    [Peer || {_, Peer} <- ppg_local_ns:which_processes({peer, Group, Destination, '_'})].
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'supervisor' Callback Functions
@@ -54,3 +57,10 @@ select_children_by_destination(Group, Destination) ->
 init([]) ->
     Child = #{id => peer, start => {ppg_peer, start_link, []}, restart => temporary},
     {ok, {#{strategy => simple_one_for_one}, [Child]}}.
+
+%%----------------------------------------------------------------------------------------------------------------------
+%% Internal Functions
+%%----------------------------------------------------------------------------------------------------------------------
+-spec sup_name(ppg:name()) -> local:otp_name().
+sup_name(Group) ->
+    ppg_local_ns:otp_name({group, Group}).

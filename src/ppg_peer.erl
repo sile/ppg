@@ -9,10 +9,8 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([start_link/4]).
+-export([start_link/3]).
 -export([stop/1]).
--export([stop_all/1]).
--export([is_valid_options/1]).
 -export([get_graph/2]).
 -export([get_destination/1]).
 -export([broadcast/2]).
@@ -28,22 +26,14 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
 %%----------------------------------------------------------------------------------------------------------------------
--define(PG2_NAME(Name), {ppg_contact_peer, Name}). % TODO: Eliminate redundant definitions
-
 -define(STATE, ?MODULE).
-
--record(opt,
-        {
-          contact_process_count :: pos_integer()
-        }).
 
 -record(?STATE,
         {
           group :: ppg:name(),
-          destination :: pid(),
+          destination :: pid(), % TODO: rename
           view :: ppg_hyparview:view(),
-          tree :: ppg_plumtree:tree(),
-          opt :: #opt{}
+          tree :: ppg_plumtree:tree()
         }).
 
 -type peer() :: pid().
@@ -52,24 +42,13 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec start_link(local:otp_name(), ppg:name(), pid(), ppg:join_options()) -> {ok, pid()} | {error, Reason} when
-      Reason :: {no_such_group, ppg:name()}.
-start_link(Name, Group, Destination, Options) ->
-    gen_server:start_link(Name, ?MODULE, [Group, Destination, Options], []).
+-spec start_link(local:otp_name(), ppg:name(), ppg:member()) -> {ok, pid()} | {error, Reason::term()}.
+start_link(Name, Group, Member) ->
+    gen_server:start_link(Name, ?MODULE, [Group, Member], []).
 
 -spec stop(local:otp_ref()) -> ok.
 stop(Peer) ->
     gen_server:stop(Peer).
-
--spec stop_all(local:otp_ref()) -> no_return().
-stop_all(Peer) ->
-    error(unimplemented, [Peer]).
-
--spec is_valid_options([ppg:join_option() | term()]) -> boolean().
-is_valid_options(Options0) ->
-    Options1 = Options0 ++ ppg:default_join_options(),
-    Val = fun (Key) -> proplists:get_value(Key, Options1) end,
-    (ppg_util:is_pos_integer(Val(contact_process_count))).
 
 -spec broadcast(local:otp_ref(), term()) -> ok.
 broadcast(Peer, Message) ->
@@ -102,29 +81,22 @@ get_graph(Peer, Timeout) ->
 %% 'gen_server' Callback Functions
 %%----------------------------------------------------------------------------------------------------------------------
 %% @private
-init([Group, Destination, Options]) ->
-    Opt = ppg_util:proplist_to_record(opt, record_info(fields, opt), Options),
-    case become_contact_peer_if_needed(Group, Opt#opt.contact_process_count) of
-        error -> {stop, {no_such_group, Group}};
-        ok    ->
-            _ = link(Destination),
-            _ = monitor(process, Destination),
+init([Group, Member]) ->
+    _ = link(Member),
+    _ = monitor(process, Member),
 
-            ContactPeer = pg2:get_closest_pid(?PG2_NAME(Group)),
-            View0 = ppg_hyparview:new(),
-            View1 = ppg_hyparview:join(ContactPeer, View0),
-            Tree = ppg_plumtree:new(Destination, ppg_hyparview:get_peers(View1)),
+    View0 = ppg_hyparview:new(Group),
+    View1 = ppg_hyparview:join(View0),
+    Tree = ppg_plumtree:new(Member, ppg_hyparview:get_peers(View1)),
 
-            State =
-                #?STATE{
-                    group = Group,
-                    destination = Destination,
-                    view = View1,
-                    tree = Tree,
-                    opt = Opt
-                   },
-            {ok, State}
-    end.
+    State =
+        #?STATE{
+            group = Group,
+            destination = Member,
+            view = View1,
+            tree = Tree
+           },
+    {ok, State}.
 
 %% @private
 handle_call({broadcast, Arg}, _From, State) ->
@@ -170,15 +142,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec become_contact_peer_if_needed(ppg:name(), pos_integer()) -> ok | error.
-become_contact_peer_if_needed(Group, MinContactProcCount) ->
-    case pg2:get_members(?PG2_NAME(Group)) of
-        {error, _} -> error;
-        Peers      ->
-            _ = length(Peers) < MinContactProcCount andalso pg2:join(?PG2_NAME(Group), self()),
-            ok
-    end.
-
 %% TODO: 未接続のエッジがなくなったらタイムアウトを待たずに終了する (接続性が満たされているかどうかを返すのも良いかもしれない)
 -spec build_graph(ppg:communication_graph(), reference()) -> ppg:communication_graph().
 build_graph(Acc, Ref) ->
