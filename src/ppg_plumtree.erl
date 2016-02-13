@@ -246,6 +246,8 @@ deliver(MsgId, Message, Tree) ->
     _ = case Message of
             {'SYSTEM', get_graph, {Ref, From}} -> % TODO:
                 From ! {Ref, get_entry(Tree)};
+            {'INTERNAL', X} -> % TODO:
+                self() ! X;
             _ ->
                 Tree#?STATE.destination ! Message
         end,

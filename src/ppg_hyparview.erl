@@ -29,6 +29,7 @@
 -define(TAG_FOREIGNER, 16#05).
 -define(TAG_SHUFFLE, 16#06).
 -define(TAG_SHUFFLEREPLY, 16#07).
+-define(TAG_CONNECTIVITY, 16#08).
 -else.
 -define(TAG_JOIN, 'JOIN').
 -define(TAG_FORWARD_JOIN, 'FORWARD_JOIN').
@@ -38,6 +39,7 @@
 -define(TAG_FOREIGNER, 'FOREIGNER').
 -define(TAG_SHUFFLE, 'SHUFFLE').
 -define(TAG_SHUFFLEREPLY, 'SHUFFLEREPLY').
+-define(TAG_CONNECTIVITY, 'CONNECTIVITY').
 -endif.
 
 -define(VIEW, ?MODULE).
@@ -48,6 +50,8 @@
           active_view = #{}          :: #{ppg_peer:peer() => Monitor::reference()},
           passive_view = #{}         :: #{ppg_peer:peer() => Monitor::(reference() | ok)}, % TODO: note (dummy or monitor_if_promoting)
           shuffle_timer = make_ref() :: reference(),
+          connectivity_timer = make_ref() :: reference(),
+          rejoin_timer = make_ref()  :: reference(),
 
           %% Static Fields
           group                      :: ppg:name(),
@@ -142,15 +146,19 @@ handle_info({?TAG_NEIGHBOR,     Arg}, View) -> {ok, handle_neighbor(Arg, View)};
 handle_info({?TAG_FOREIGNER,    Arg}, View) -> {ok, handle_foreigner(Arg, View)};
 handle_info({?TAG_SHUFFLE,      Arg}, View) -> {ok, handle_shuffle(Arg, View)};
 handle_info({?TAG_SHUFFLEREPLY, Arg}, View) -> {ok, handle_shufflereply(Arg, View)};
+handle_info({?TAG_CONNECTIVITY, Arg}, View) -> {ok, handle_connectivity(Arg, View)};
 handle_info({'DOWN', Ref, _, Pid, _}, View) ->
-    %% TODO:
-    _ = get_contact_peer(View),
     case View of
         #?VIEW{active_view  = #{Pid := Ref}} -> {ok, handle_disconnect(Pid, true, View)};
         #?VIEW{passive_view = #{Pid := Ref}} -> {ok, handle_foreigner(Pid, View)};
         _                                    -> ignore
     end;
-handle_info(start_shuffle, View) -> {ok, handle_start_shuffle(View)};
+handle_info({?MODULE, start_shuffle}, View) -> {ok, handle_start_shuffle(View)};
+handle_info({?MODULE, rejoin}, View) -> {ok, join(View)}; % TODO:
+handle_info({?MODULE, connectivity}, View) -> % TODO:
+    _ = get_contact_peer(View) ! message_connectivity(up), % TODO: self() =/= ContactPeer
+    Timer = erlang:send_after(60 * 1000, self(), {?MODULE, rejoin}),
+    {ok, View#?VIEW{rejoin_timer = Timer}};
 handle_info(_Info, _View) -> ignore.
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -161,10 +169,10 @@ schedule_shuffle(View = #?VIEW{shuffle_interval = infinity}) ->
     View;
 schedule_shuffle(View = #?VIEW{shuffle_interval = Interval}) ->
     _ = erlang:cancel_timer(View#?VIEW.shuffle_timer),
-    _ = receive start_shuffle -> ok after 0 -> ok end,
+    _ = receive {?MODULE, start_shuffle} -> ok after 0 -> ok end,
 
     After = (Interval div 2) + (rand:uniform(Interval + 1) - 1),
-    Ref = erlang:send_after(After, self(), start_shuffle),
+    Ref = erlang:send_after(After, self(), {?MODULE, start_shuffle}),
     View#?VIEW{shuffle_timer = Ref}.
 
 -spec handle_start_shuffle(view()) -> view().
@@ -218,10 +226,39 @@ handle_connect(Peer, View) ->
 handle_disconnect(Peer, IsPeerDown, View0) ->
     View1 = disconnect_peer(Peer, false, View0),
     View2 = promote_passive_peer(View1),
+
+    ContactPeer = get_contact_peer(View2),
+    View3 =
+        case self() =:= ContactPeer of
+            true  -> View2;
+            false ->
+                _ = erlang:cancel_timer(View2#?VIEW.connectivity_timer),
+                _ = receive {?MODULE, connectivity} -> ok after 0 -> ok end,
+
+                Timer = erlang:send_after(rand:uniform(60 * 1000), self(), {?MODULE, connectivity}),
+                View2#?VIEW{connectivity_timer = Timer}
+        end,
     case IsPeerDown of
-        true  -> View2;
-        false -> add_peer_to_passive_view(Peer, View2)
+        true  -> View3;
+        false -> add_peer_to_passive_view(Peer, View3)
     end.
+
+-spec handle_connectivity(up|down, view()) -> view().
+handle_connectivity(up, View) ->
+    ContactPeer = get_contact_peer(View),
+    case self() =:= ContactPeer of
+        false -> View;
+        true  ->
+            ok = ppg_peer:async_broadcast(self(), {'INTERNAL', message_connectivity(down)}), % TODO
+            View
+    end;
+handle_connectivity(down, View) ->
+    _ = erlang:cancel_timer(View#?VIEW.connectivity_timer),
+    _ = receive {?MODULE, connectivity} -> ok after 0 -> ok end,
+
+    _ = erlang:cancel_timer(View#?VIEW.rejoin_timer),
+    _ = receive {?MODULE, rejoin} -> ok after 0 -> ok end,
+    View.
 
 -spec handle_neighbor({high|low, ppg_peer:peer()}, view()) -> view().
 handle_neighbor({high, Peer}, View) ->
@@ -234,7 +271,7 @@ handle_neighbor({low, Peer}, View) ->
 
 -spec handle_foreigner(ppg_peer:peer(), view()) -> view().
 handle_foreigner(Peer, View0) ->
-    View1 = remove_passive_peer(Peer, View0),
+    View1 = remove_passive_peer(Peer, View0), % TODO: 論文中ではpassiveを削除しない、と書かれているのでそれに合わせる?
     case maps:size(View1#?VIEW.active_view) < View1#?VIEW.active_view_size of
         false -> View1;
         true  -> promote_passive_peer(View1)
@@ -398,3 +435,6 @@ message_shuffle(Peers, TimeToLive) -> {?TAG_SHUFFLE, {Peers, TimeToLive, self()}
 
 -spec message_shufflereply([ppg_peer:peer()]) -> {?TAG_SHUFFLEREPLY, [ppg_peer:peer()]}.
 message_shufflereply(Peers) -> {?TAG_SHUFFLEREPLY, Peers}.
+
+-spec message_connectivity(up|down) -> {?TAG_CONNECTIVITY, up|down}.
+message_connectivity(Direction) -> {?TAG_CONNECTIVITY, Direction}.

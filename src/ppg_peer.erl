@@ -14,6 +14,7 @@
 -export([get_graph/2]).
 -export([get_destination/1]).
 -export([broadcast/2]).
+-export([async_broadcast/2]).
 
 -export_type([peer/0]).
 -export_type([contact_peer/0]).
@@ -53,6 +54,10 @@ stop(Peer) ->
 -spec broadcast(local:otp_ref(), term()) -> ok.
 broadcast(Peer, Message) ->
     gen_server:call(Peer, {broadcast, Message}).
+
+-spec async_broadcast(local:otp_ref(), term()) -> ok.
+async_broadcast(Peer, Message) ->
+    gen_server:cast(Peer, {broadcast, Message}).
 
 -spec get_destination(local:otp_ref()) -> pid().
 get_destination(Peer) ->
@@ -107,6 +112,9 @@ handle_call(_Request, _From, State) ->
     {noreply, State}.
 
 %% @private
+handle_cast({broadcast, Arg}, State) ->
+    {reply, _, State1} = handle_broadcast(Arg, State),
+    {noreply, State1};
 handle_cast({get_graph, Arg}, State) ->
     handle_get_graph(Arg, State);
 handle_cast(_Request, State) ->
