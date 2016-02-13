@@ -55,7 +55,10 @@
           active_random_walk_length  :: pos_integer(),
           passive_random_walk_length :: pos_integer(),
           shuffle_count              :: pos_integer(),
-          shuffle_interval           :: timeout()
+          shuffle_interval           :: timeout(),
+
+          %% XXX
+          contact_peer :: pid() | undefined
         }).
 
 -opaque view() :: #?VIEW{}.
@@ -128,7 +131,7 @@ get_peers(#?VIEW{active_view = View}) -> maps:keys(View).
 -spec join(ppg_peer:contact_peer(), view()) -> view().
 join(ContactPeer, View) ->
     _ = ContactPeer ! message_join(),
-    View.
+    View#?VIEW{contact_peer = ContactPeer}.
 
 -spec handle_info(term(), view()) -> {ok, view()} | ignore.
 handle_info({?TAG_JOIN,         Arg}, View) -> {ok, handle_join(Arg, View)};
@@ -288,7 +291,7 @@ ensure_active_view_free_space(View0) ->
 
 -spec disconnect_peer(ppg_peer:peer(), boolean(), view()) -> view().
 disconnect_peer(Peer, IsActiveDisconnect, View) ->
-    Monitor = maps:get(Peer, View#?VIEW.active_view),
+    Monitor = maps:get(Peer, View#?VIEW.active_view, make_ref()), % NOTE: maybe already disconnected
     _ = demonitor(Monitor, [flush]),
     _ = IsActiveDisconnect andalso (Peer ! message_disconnect()),
     ok = ppg_plumtree:notify_neighbor_down(Peer),
@@ -315,7 +318,11 @@ connect_to_peer(Peer, IsActiveConnect, View) ->
 
 -spec promote_passive_peer(view()) -> view().
 promote_passive_peer(View = #?VIEW{passive_view = Passive}) when Passive =:= #{} ->
-    View;
+    ContactPeer =View#?VIEW.contact_peer, % TODO: Add handling of a case in which there is no concat peer
+    case View#?VIEW.active_view =:= #{} andalso ContactPeer =/= self() of
+        false -> View;
+        true  -> join(ContactPeer, View)
+    end;
 promote_passive_peer(View) ->
     Peer = ppg_util:random_select_key(View#?VIEW.passive_view),
     _ = Peer ! message_neighbor(View),

@@ -89,11 +89,37 @@ broadcast_test_() ->
         fun () ->
                 ok = ppg:join(Group, self()),
                 ok = ppg:join(Group, self()),
-                timer:sleep(3000), % TODO: delete
+                timer:sleep(100), % TODO: delete
 
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end
+        end}
+      ]).
+
+leave_test_() ->
+    Group = foo,
+    foreach(
+      [Group],
+      [
+       {"Leaves a group",
+        fun () ->
+                lists:foreach(fun (_) -> ppg:join(Group, self()) end, lists:seq(1, 10)),
+                timer:sleep(100), % TODO: delete
+
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                timer:sleep(100), % TODO: delete
+                lists:foreach(fun (I) -> receive hello -> ?assert(true) after 50 -> ?assert(I) end end,
+                              lists:seq(1, 10)),
+                receive hello -> ?assert(false) after 50 -> ?assert(true) end,
+
+                ?assertEqual(ok, ppg:leave(Group, self())),
+                timer:sleep(100), % TODO: delete
+                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                timer:sleep(100), % TODO: delete
+                lists:foreach(fun (I) -> receive hello -> ?assert(true) after 50 -> ?assert(I) end end,
+                              lists:seq(1, 9)),
+                receive hello -> ?assert(false) after 50 -> ?assert(true) end
         end}
       ]).
 

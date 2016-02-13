@@ -176,6 +176,7 @@ handle_ihave_timeout(MsgId, Tree0) ->
 
 -spec handle_graft({msg_id(), round(), pid()}, tree()) -> {ok, tree()}.
 handle_graft({MsgId, Round, Sender}, Tree0) ->
+    %% TODO: lazyにいない場合には拒否した方が良いかもしれない (HyParViewのレイヤーですでに切断されている可能性があるので)
     Tree1 = add_eager(Sender, remove_lazy(Sender, Tree0)),
     case Tree0#?STATE.receives of
         #{MsgId := Message} ->
