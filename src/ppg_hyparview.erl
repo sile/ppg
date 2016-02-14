@@ -224,7 +224,7 @@ handle_connect(Peer, View) ->
 
 -spec handle_disconnect(ppg_peer:peer(), boolean(), view()) -> view().
 handle_disconnect(Peer, IsPeerDown, View0) ->
-    View1 = disconnect_peer(Peer, false, View0),
+    View1 = disconnect_peer(Peer, View0),
     View2 = promote_passive_peer(View1),
 
     ContactPeer = get_contact_peer(View2),
@@ -328,19 +328,22 @@ ensure_active_view_free_space(View0) ->
         true  -> View0;
         false ->
             Peer = ppg_util:random_select_key(View0#?VIEW.active_view),
-            View1 = disconnect_peer(Peer, true, View0),
+            View1 = disconnect_peer(Peer, View0),
             View2 = add_peer_to_passive_view(Peer, View1),
             ensure_active_view_free_space(View2)
     end.
 
--spec disconnect_peer(ppg_peer:peer(), boolean(), view()) -> view().
-disconnect_peer(Peer, IsActiveDisconnect, View) ->
-    Monitor = maps:get(Peer, View#?VIEW.active_view, make_ref()), % NOTE: maybe already disconnected
-    _ = demonitor(Monitor, [flush]),
-    _ = IsActiveDisconnect andalso (Peer ! message_disconnect()),
-    ok = ppg_plumtree:notify_neighbor_down(Peer),
-    ActiveView = maps:remove(Peer, View#?VIEW.active_view),
-    View#?VIEW{active_view = ActiveView}.
+-spec disconnect_peer(ppg_peer:peer(), view()) -> view().
+disconnect_peer(Peer, View) ->
+    case maps:find(Peer, View#?VIEW.active_view) of
+        error         -> View;
+        {ok, Monitor} ->
+            _ = demonitor(Monitor, [flush]),
+            _ = Peer ! message_disconnect(), % NOTE: タイミング依存で片方向だけ接続してしまうことを防ぐために常に送信
+            ok = ppg_plumtree:notify_neighbor_down(Peer),
+            ActiveView = maps:remove(Peer, View#?VIEW.active_view),
+            View#?VIEW{active_view = ActiveView}
+    end.
 
 -spec ensure_passive_view_free_space(pos_integer(), view()) -> view().
 ensure_passive_view_free_space(Room, View) ->
@@ -355,7 +358,7 @@ ensure_passive_view_free_space(Room, View) ->
 -spec connect_to_peer(ppg_peer:peer(), boolean(), view()) -> view().
 connect_to_peer(Peer, IsActiveConnect, View) ->
     _ = IsActiveConnect andalso (Peer ! message_connect()),
-    ok = ppg_plumtree:notify_neighbor_up(Peer),
+    ok = ppg_plumtree:notify_neighbor_up(Peer), % TODO: アトミックに反映されるようにしたい
     Monitor = monitor(process, Peer),
     io:format("MONITOR: [~p] ~p:~p\n", [self(), Peer, Monitor]),
     ActiveView = maps:put(Peer, Monitor, View#?VIEW.active_view),
