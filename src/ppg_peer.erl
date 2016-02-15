@@ -124,7 +124,16 @@ handle_cast(_Request, State) ->
 handle_info(Info, State) ->
     io:format("# [~p] ~w\n", [self(), Info]),
     case ppg_hyparview:handle_info(Info, State#?STATE.view) of
-        {ok, View} -> {noreply, State#?STATE{view = View}};
+        {ok, View} ->
+            {Queue, View1} = ppg_hyparview:flush_queue(View),
+            {ok, Tree} =
+                lists:foldl(
+                  fun ({up, Peer},   {ok, Acc}) -> ppg_plumtree:handle_info({'NEIGHBOR_UP', Peer}, Acc);
+                      ({down, Peer}, {ok, Acc}) -> ppg_plumtree:handle_info({'NEIGHBOR_DOWN', Peer}, Acc)
+                  end,
+                  {ok, State#?STATE.tree},
+                  Queue),
+            {noreply, State#?STATE{view = View1, tree = Tree}};
         ignore     ->
             case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
                 {ok, Tree} -> {noreply, State#?STATE{tree = Tree}};

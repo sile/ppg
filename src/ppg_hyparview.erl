@@ -14,6 +14,8 @@
 -export([get_peers/1]).
 -export([handle_info/2]).
 
+-export([flush_queue/1]).
+
 -export_type([view/0]).
 -export_type([options/0, option/0]).
 
@@ -53,6 +55,9 @@
           connectivity_timer = make_ref() :: reference(),
           rejoin_timer = make_ref()  :: reference(),
 
+          connections = #{} :: #{ppg_peer:peer() => connection()},
+          queue = [] :: [{up|down, ppg_peer:peer()}],
+
           %% Static Fields
           group                      :: ppg:name(),
           active_view_size           :: pos_integer(),
@@ -73,6 +78,8 @@
                 | {passive_random_walk_length, pos_integer()}
                 | {shuffle_count, pos_integer()}
                 | {shuffle_interval, timeout()}.
+
+-type connection() :: reference().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -136,6 +143,10 @@ join(View) ->
     ContactPeer = get_contact_peer(View),
     _ = ContactPeer =/= self() andalso (ContactPeer ! message_join()),
     View.
+
+-spec flush_queue(view()) -> {list(), view()}.
+flush_queue(View) ->
+    {lists:reverse(View#?VIEW.queue), View#?VIEW{queue = []}}.
 
 -spec handle_info(term(), view()) -> {ok, view()} | ignore.
 handle_info({?TAG_JOIN,         Arg}, View) -> {ok, handle_join(Arg, View)};
@@ -218,13 +229,20 @@ handle_forward_join({NewPeer, TimeToLive, Sender}, View0) ->
     _ = Next ! message_forward_join(NewPeer, TimeToLive - 1),
     View1.
 
--spec handle_connect(ppg_peer:peer(), view()) -> view().
-handle_connect(Peer, View) ->
-    add_peer_to_active_view(Peer, false, View).
+-spec handle_connect({connection(), ppg_peer:peer()}, view()) -> view().
+handle_connect({Conn, Peer}, View) ->
+    Connections = maps:put(Peer, Conn, View#?VIEW.connections),
+    add_peer_to_active_view(Peer, false, View#?VIEW{connections = Connections}).
 
--spec handle_disconnect(ppg_peer:peer(), boolean(), view()) -> view().
+-spec handle_disconnect({connection(), ppg_peer:peer()} | ppg_peer:peer(), boolean(), view()) -> view().
+handle_disconnect({Conn, Peer}, IsPeerDown, View) ->
+    case maps:find(Peer, View#?VIEW.connections) of
+        error      -> View; % already disconnected
+        {ok, Conn} -> handle_disconnect(Peer, IsPeerDown, View);
+        {ok, _}    -> View % already disconnected
+    end;
 handle_disconnect(Peer, IsPeerDown, View0) ->
-    View1 = disconnect_peer(Peer, View0),
+    View1 = disconnect_peer(Peer, false, View0),
     View2 = promote_passive_peer(View1),
 
     ContactPeer = get_contact_peer(View2),
@@ -328,21 +346,28 @@ ensure_active_view_free_space(View0) ->
         true  -> View0;
         false ->
             Peer = ppg_util:random_select_key(View0#?VIEW.active_view),
-            View1 = disconnect_peer(Peer, View0),
+            View1 = disconnect_peer(Peer, true, View0),
             View2 = add_peer_to_passive_view(Peer, View1),
             ensure_active_view_free_space(View2)
     end.
 
--spec disconnect_peer(ppg_peer:peer(), view()) -> view().
-disconnect_peer(Peer, View) ->
+-spec disconnect_peer(ppg_peer:peer(), boolean(), view()) -> view().
+disconnect_peer(Peer, IsActiveDisconnect, View) ->
     case maps:find(Peer, View#?VIEW.active_view) of
         error         -> View;
         {ok, Monitor} ->
             _ = demonitor(Monitor, [flush]),
-            _ = Peer ! message_disconnect(), % NOTE: タイミング依存で片方向だけ接続してしまうことを防ぐために常に送信
-            ok = ppg_plumtree:notify_neighbor_down(Peer),
-            ActiveView = maps:remove(Peer, View#?VIEW.active_view),
-            View#?VIEW{active_view = ActiveView}
+            View1 =
+                case IsActiveDisconnect of
+                    false -> View;
+                    true  ->
+                        Conn = maps:get(Peer, View#?VIEW.connections),
+                        _ = Peer ! message_disconnect(Conn),
+                        View#?VIEW{connections = maps:remove(Peer, View#?VIEW.connections)}
+                end,
+            %% ok = ppg_plumtree:notify_neighbor_down(Peer),
+            ActiveView = maps:remove(Peer, View1#?VIEW.active_view),
+            View1#?VIEW{active_view = ActiveView, queue = [{down, Peer} | View1#?VIEW.queue]}
     end.
 
 -spec ensure_passive_view_free_space(pos_integer(), view()) -> view().
@@ -356,13 +381,20 @@ ensure_passive_view_free_space(Room, View) ->
     end.
 
 -spec connect_to_peer(ppg_peer:peer(), boolean(), view()) -> view().
-connect_to_peer(Peer, IsActiveConnect, View) ->
-    _ = IsActiveConnect andalso (Peer ! message_connect()),
-    ok = ppg_plumtree:notify_neighbor_up(Peer), % TODO: アトミックに反映されるようにしたい
+connect_to_peer(Peer, IsActiveConnect, View0) ->
+    View =
+        case IsActiveConnect of
+            false -> View0;
+            true  ->
+                Conn = make_ref(),
+                _ = Peer ! message_connect(Conn),
+                Connections = maps:put(Peer, Conn, View0#?VIEW.connections),
+                View0#?VIEW{connections = Connections}
+        end,
     Monitor = monitor(process, Peer),
     io:format("MONITOR: [~p] ~p:~p\n", [self(), Peer, Monitor]),
     ActiveView = maps:put(Peer, Monitor, View#?VIEW.active_view),
-    remove_passive_peer(Peer, View#?VIEW{active_view = ActiveView}).
+    remove_passive_peer(Peer, View#?VIEW{active_view = ActiveView, queue = [{up, Peer} | View#?VIEW.queue]}).
 
 -spec promote_passive_peer(view()) -> view().
 promote_passive_peer(View) ->
@@ -384,7 +416,6 @@ promote_passive_peer(View) ->
 
 -spec remove_passive_peer(ppg_peer:peer(), view()) -> view().
 remove_passive_peer(Peer, View = #?VIEW{passive_view = PassiveView}) ->
-    io:format("REMOVE: [~p] ~p:~p\n", [self(), Peer, maps:get(Peer, PassiveView, non)]),
     _ = my_demonitor(maps:get(Peer, PassiveView, make_ref()), [flush]),
     View#?VIEW{passive_view = maps:remove(Peer, PassiveView)}.
 
@@ -414,11 +445,11 @@ message_join() -> {?TAG_JOIN, self()}.
       Sender     :: ppg_peer:peer().
 message_forward_join(NewPeer, TimeToLive) -> {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, self()}}.
 
--spec message_connect() -> {?TAG_CONNECT, ppg_peer:peer()}.
-message_connect() -> {?TAG_CONNECT, self()}.
+-spec message_connect(connection()) -> {?TAG_CONNECT, {connection(), ppg_peer:peer()}}.
+message_connect(Conn) -> {?TAG_CONNECT, {Conn, self()}}.
 
--spec message_disconnect() -> {?TAG_DISCONNECT, ppg_peer:peer()}.
-message_disconnect() -> {?TAG_DISCONNECT, self()}.
+-spec message_disconnect(connection()) -> {?TAG_DISCONNECT, {connection(), ppg_peer:peer()}}.
+message_disconnect(Conn) -> {?TAG_DISCONNECT, {Conn, self()}}.
 
 -spec message_neighbor(view()) -> {?TAG_NEIGHBOR, {high|low, ppg_peer:peer()}}.
 message_neighbor(#?VIEW{active_view = ActiveView}) ->
