@@ -19,6 +19,7 @@
 
 -export_type([view/0]).
 -export_type([options/0, option/0]).
+-export_type([connection_id/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
@@ -88,15 +89,9 @@
 -type ttl() :: non_neg_integer().
 %% Time To Live
 
--ifdef(DEBUG).
--type event() :: {up, connection_id()}
-               | {down, connection_id()}
-               | {broadcast, term()}.
--else.
 -type event() :: {up, {connection_id(), ppg_peer:peer()}}
                | {down, {connection_id(), ppg_peer:peer()}}
                | {broadcast, term()}.
--endif.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -149,8 +144,9 @@ new(Group, Options0) ->
     View1 = schedule_shuffle(View0),
     View1.
 
--spec get_peers(view()) -> [ppg_peer:peer()].
-get_peers(#?VIEW{active_view = View}) -> maps:keys(View).
+-spec get_peers(view()) -> [connection_id()].
+get_peers(#?VIEW{active_view = View}) ->
+    maps:fold(fun (K, V, Acc) -> [{V, K} | Acc] end, [], View).
 
 -spec join(view()) -> view().
 join(View) ->
@@ -266,7 +262,7 @@ start_connectivity_check_if_needed(View) ->
             %% TODO: より厳格な接続性の保証を行う
             MaxBroadcastDelay = 10 * 1000, % TODO: optionize
             After = rand:uniform(60 * 1000 * 2), % TODO: optionize
-            CTimer = ppg_util:cancel_and_send_after(View#?VIEW.connectivity_timer, After, ContactPeer, message_connectivity(up)),
+            CTimer = ppg_util:cancel_and_send_after(View#?VIEW.connectivity_timer, After, self(), message_connectivity(up)),
             RTimer = ppg_util:cancel_and_send_after(View#?VIEW.rejoin_timer, After + MaxBroadcastDelay, self(), {?MODULE, rejoin}),
             View#?VIEW{connectivity_timer = CTimer, rejoin_timer = RTimer}
     end.
@@ -294,13 +290,20 @@ handle_start_shuffle(View = #?VIEW{shuffle_count = Count}) ->
 
 -spec handle_connectivity(up|kick|down, view()) -> view().
 handle_connectivity(up, View) ->
-    case erlang:read_timer(View#?VIEW.connectivity_timer) of
+    ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
+    case ContactPeer =:= self() of
         false ->
-            %% TODO: Optionaize
-            Timer = erlang:send_after(5 * 1000, self(), message_connectivity(kick)),
-            View#?VIEW{connectivity_timer = Timer};
-        _ ->
-            View
+            _ = ContactPeer ! message_connectivity(up),
+            View;
+        true ->
+            case erlang:read_timer(View#?VIEW.connectivity_timer) of
+                false ->
+                    %% TODO: Optionaize
+                    Timer = erlang:send_after(5 * 1000, self(), message_connectivity(kick)),
+                    View#?VIEW{connectivity_timer = Timer};
+                _ ->
+                    View
+            end
     end;
 handle_connectivity(kick, View) ->
     enqueue_event({broadcast, message_connectivity(down)}, View);

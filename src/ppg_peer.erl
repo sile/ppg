@@ -126,13 +126,13 @@ handle_info(Info, State) ->
     case ppg_hyparview:handle_info(Info, State#?STATE.view) of
         {ok, View} ->
             {Queue, View1} = ppg_hyparview:flush_queue(View),
-            {ok, Tree} =
+            Tree =
                 lists:foldl(
-                  fun ({up, {_, Peer}},   {ok, Acc}) -> ppg_plumtree:handle_info({'NEIGHBOR_UP', Peer}, Acc);
-                      ({down, {_, Peer}}, {ok, Acc}) -> ppg_plumtree:handle_info({'NEIGHBOR_DOWN', Peer}, Acc);
-                      ({broadcast, Msg}, {ok, Acc}) -> async_broadcast(self(), {'INTERNAL', Msg}), {ok, Acc}
+                  fun ({up, Peer},   Acc) -> ppg_plumtree:neighbor_up(Peer, Acc);
+                      ({down, Peer}, Acc) -> ppg_plumtree:neighbor_down(Peer, Acc);
+                      ({broadcast, Msg},  Acc) -> async_broadcast(self(), {'INTERNAL', Msg}), Acc
                   end,
-                  {ok, State#?STATE.tree},
+                  State#?STATE.tree,
                   Queue),
             {noreply, State#?STATE{view = View1, tree = Tree}};
         ignore     ->
