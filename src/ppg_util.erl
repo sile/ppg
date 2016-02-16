@@ -12,12 +12,8 @@
 -export([is_timeout/1]).
 -export([proplist_to_record/3]).
 -export([function_exported/3]).
--export([delete_random/1]). % TODO:
--export([select_random/1]).
--export([random_pop/1]).
--export([random_select/1]).
--export([random_select_key/1]).
--export([random_select_keys/2]).
+-export([cancel_and_flush_timer/2]).
+-export([cancel_and_send_after/4]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -50,46 +46,18 @@ function_exported(Module, Function, Arity) ->
     _ = code:is_loaded(Module) =/= false orelse code:load_file(Module),
     erlang:function_exported(Module, Function, Arity).
 
--spec delete_random(list()) -> {term(), list()}.
-delete_random(List) ->
-    I = rand:uniform(length(List)) - 1,
-    {Front, [Deleted | Rear]} = lists:split(I, List),
-    {Deleted, Front ++ Rear}.
+-spec cancel_and_flush_timer(reference(), term()) -> ok.
+cancel_and_flush_timer(Timer, FlushMessage) ->
+    _ = erlang:cancel_timer(Timer),
+    receive
+        FlushMessage -> ok
+    after 0 -> ok
+    end.
 
--spec select_random(list()) -> term().
-select_random(List) ->
-    lists:nth(rand:uniform(length(List)), List).
-
--spec random_pop(#{}) -> {{Key::term(), Value::term()}, #{}}.
-random_pop(Map) ->
-    _ = maps:size(Map) > 0 orelse error(badarg, [Map]),
-    maps:fold(
-      fun (K, V, {0, Acc})                    -> {{K, V}, Acc};
-          (K, V, {I, Acc}) when is_integer(I) -> {I - 1, maps:put(K, V, Acc)};
-          (K, V, {Popped, Acc})               -> {Popped, maps:put(K, V, Acc)}
-      end,
-      {rand:uniform(maps:size(Map)) - 1, maps:new()},
-      Map).
-
--spec random_select(#{}) -> {Key::term(), Value::term()}.
-random_select(Map) ->
-    _ = maps:size(Map) > 0 orelse error(badarg, [Map]),
-    maps:fold(
-      fun (K, V, 0)                    -> {K, V};
-          (_, _, I) when is_integer(I) -> I - 1;
-          (_, _, Selected)             -> Selected
-      end,
-      rand:uniform(maps:size(Map)) - 1,
-      Map).
-
--spec random_select_key(#{}) -> term().
-random_select_key(Map) ->
-    element(1, random_select(Map)).
-
--spec random_select_keys(pos_integer(), #{}) -> [term()].
-random_select_keys(N, Map) ->
-    lists:sublist(shuffle(maps:keys(Map)), N).
-
--spec shuffle(list()) -> list().
-shuffle(List) ->
-    [X || {_, X} <- lists:sort([{rand:uniform(), X} || X <- List])].
+-spec cancel_and_send_after(reference(), timeout(), pid(), term()) -> reference().
+cancel_and_send_after(OldTimer, Time, Pid, Message) ->
+    _ = case Pid =:= self() of
+            true  -> cancel_and_flush_timer(OldTimer, Message);
+            false -> erlang:cancel_timer(OldTimer)
+        end,
+    erlang:send_after(Time, Pid, Message).
