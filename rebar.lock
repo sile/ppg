@@ -1,8 +1,1 @@
-[{<<"heaps">>,
-  {git,"git://github.com/sile/heaps.git",
-       {ref,"181e7730f5d48bd5ed9cc461c5982da707b681d5"}},
-  0},
- {<<"local">>,
-  {git,"git://github.com/sile/local.git",
-       {ref,"d8d21b3b66f0999af985f7f06d634e74860218e0"}},
-  0}].
+[].
