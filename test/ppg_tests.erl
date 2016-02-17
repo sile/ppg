@@ -76,7 +76,7 @@ broadcast_test_() ->
         end},
        {"Broadcasts to a single member group",
         fun () ->
-                ok = ppg:join(Group),
+                {ok, _} = ppg:join(Group),
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
 
@@ -85,8 +85,8 @@ broadcast_test_() ->
         end},
        {"Broadcasts to a two member group",
         fun () ->
-                ok = ppg:join(Group),
-                ok = ppg:join(Group),
+                {ok, _} = ppg:join(Group),
+                {ok, _} = ppg:join(Group),
                 timer:sleep(100), % TODO: delete
 
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),
@@ -103,7 +103,7 @@ leave_test_() ->
        {"Leaves a group",
         fun () ->
                 Num = 20, % TODO: => 100
-                lists:foreach(fun (_) -> ppg:join(Group) end, lists:seq(1, Num)),
+                lists:foreach(fun (_) -> {ok, _} = ppg:join(Group) end, lists:seq(1, Num)),
                 timer:sleep(100), % TODO: delete
 
                 ?assertEqual(ok, ppg:broadcast(Group, hello)),

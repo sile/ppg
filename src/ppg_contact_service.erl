@@ -30,7 +30,7 @@
 new(Group) ->
     #?STATE{group = Group}.
 
--spec get_peer(service()) -> ppg_peer:peer().
+-spec get_peer(service()) -> ppg:peer().
 get_peer(Service = #?STATE{group = Group}) ->
     GlobalName = {?MODULE, Group},
     case global:whereis_name(GlobalName) of

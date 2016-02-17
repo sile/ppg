@@ -10,7 +10,7 @@
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
 -export([start_link/1]).
--export([push_member/2]).
+-export([push_member/3]).
 -export([pop_member/2]).
 -export([get_peer/2]).
 
@@ -28,11 +28,11 @@ start_link(Group) ->
     supervisor:start_link(sup_name(Group), ?MODULE, []).
 
 %% NOTE: This function is executed by `Member' (i.e., serialized)
--spec push_member(ppg:name(), ppg:member()) -> {ok, pid()} | {error, Reason::term()}.
-push_member(Group, Member) ->
+-spec push_member(ppg:name(), ppg:member(), ppg:join_options()) -> {ok, pid()} | {error, Reason::term()}.
+push_member(Group, Member, Options) ->
     Count = length(ppg_local_ns:which_processes({peer, Group, Member, '_'})),
     Name = ppg_local_ns:otp_name({peer, Group, Member, Count}),
-    supervisor:start_child(sup_name(Group), [Name, Group, Member]).
+    supervisor:start_child(sup_name(Group), [Name, Group, Member, Options]).
 
 %% NOTE: This function is executed by `Member' (i.e., serialized)
 -spec pop_member(ppg:name(), ppg:member()) -> ok.

@@ -21,7 +21,6 @@
 -export([get_peers/1]).
 
 -export_type([tree/0]).
--export_type([options/0, option/0]).
 -export_type([peer/0]).
 -export_type([peer_type/0]).
 -export_type([message/0]).
@@ -37,7 +36,7 @@
 
 -record(peer,
         {
-          pid                      :: ppg_peer:peer(),
+          pid                      :: ppg:peer(),
           type = eager             :: peer_type(),
           nohave = gb_sets:empty() :: gb_sets:set(message_id())
         }).
@@ -71,17 +70,10 @@
 
 -opaque tree() :: #?TREE{}.
 
--type options() :: [option()].
-
-%% TODO: rename
--type option() :: {ihave_timeout, timeout()}
-                | {wehave_retention_period, timeout()}
-                | {max_nohave_count, pos_integer()}. % => max_history_size(?)
-
 -type peer_type() :: eager | lazy.
 
 -type peer() :: #{
-            pid        => ppg_peer:peer(),
+            pid        => ppg:peer(),
             connection => ppg_hyparview:connection(),
             type       => peer_type(),
             nohaves    => non_neg_integer()
@@ -99,7 +91,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec default_options() -> options().
+-spec default_options() -> [ppg:plumtree_option()].
 default_options() ->
     [
      {ihave_timeout, 50},
@@ -108,11 +100,11 @@ default_options() ->
     ].
 
 %% @equiv new(Member, Peers, default_options())
--spec new(ppg:member(), [{ppg_peer:peer(), connection()}]) -> tree().
+-spec new(ppg:member(), [{ppg:peer(), connection()}]) -> tree().
 new(Member, Peers) ->
     new(Member, Peers, default_options()).
 
--spec new(ppg:member(), [{ppg_peer:peer(), connection()}], options()) -> tree().
+-spec new(ppg:member(), [{ppg:peer(), connection()}], [ppg:plumtree_option()]) -> tree().
 new(Member, Peers, Options0) ->
     _ = is_list(Options0) orelse error(badarg, [Member, Peers, Options0]),
     Options1 = Options0 ++ default_options(),
@@ -131,7 +123,7 @@ new(Member, Peers, Options0) ->
         max_nohave_count        = Get(max_nohave_count, fun ppg_util:is_pos_integer/1)
        }.
 
--spec neighbor_up(ppg_peer:peer(), connection(), tree()) -> tree().
+-spec neighbor_up(ppg:peer(), connection(), tree()) -> tree().
 neighbor_up(PeerPid, Connection, Tree) ->
     Nohave =
         maps:fold(fun (MsgId, _, Acc) ->
@@ -143,7 +135,7 @@ neighbor_up(PeerPid, Connection, Tree) ->
     Connections = maps:put(Connection, #peer{pid = PeerPid, nohave = Nohave}, Tree#?TREE.connections),
     Tree#?TREE{connections = Connections}.
 
--spec neighbor_down(ppg_peer:peer(), connection(), tree()) -> tree().
+-spec neighbor_down(ppg:peer(), connection(), tree()) -> tree().
 neighbor_down(_, Connection, Tree0) ->
     Connections = maps:remove(Connection, Tree0#?TREE.connections),
     Tree1 =
