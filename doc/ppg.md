@@ -17,11 +17,11 @@ Copyright (c) 2016 Takeru Ohta <phjgt308@gmail.com>
 
 
 
-### <a name="type-communication_graph">communication_graph()</a> ###
+### <a name="type-hyparview_option">hyparview_option()</a> ###
 
 
 <pre><code>
-communication_graph() = [{Node::pid(), Member::pid(), [Edge::{eager | lazy, pid()}]}]
+hyparview_option() = {active_view_size, pos_integer()} | {passive_view_size, pos_integer()} | {active_random_walk_length, pos_integer()} | {passive_random_walk_length, pos_integer()} | {shuffle_count, pos_integer()} | {shuffle_interval, timeout()} | {max_broadcast_delay, timeout()} | {allowable_disconnection_period, timeout()}
 </code></pre>
 
 
@@ -31,7 +31,7 @@ communication_graph() = [{Node::pid(), Member::pid(), [Edge::{eager | lazy, pid(
 
 
 <pre><code>
-join_option() = {contact_process_count, pos_integer()}
+join_option() = {plumtree, [<a href="#type-plumtree_option">plumtree_option()</a>]} | {hyparview, [<a href="#type-hyparview_option">hyparview_option()</a>]}
 </code></pre>
 
 
@@ -47,6 +47,26 @@ join_options() = [<a href="#type-join_option">join_option()</a>]
 
 
 
+### <a name="type-member">member()</a> ###
+
+
+<pre><code>
+member() = pid()
+</code></pre>
+
+
+
+
+### <a name="type-message">message()</a> ###
+
+
+<pre><code>
+message() = term()
+</code></pre>
+
+
+
+
 ### <a name="type-name">name()</a> ###
 
 
@@ -54,12 +74,32 @@ join_options() = [<a href="#type-join_option">join_option()</a>]
 name() = term()
 </code></pre>
 
+
+
+
+### <a name="type-peer">peer()</a> ###
+
+
+<pre><code>
+peer() = pid()
+</code></pre>
+
+
+
+
+### <a name="type-plumtree_option">plumtree_option()</a> ###
+
+
+<pre><code>
+plumtree_option() = {ihave_timeout, timeout()} | {wehave_retention_period, timeout()} | {max_nohave_count, pos_integer()}
+</code></pre>
+
 <a name="index"></a>
 
 ## Function Index ##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#broadcast-2">broadcast/2</a></td><td></td></tr><tr><td valign="top"><a href="#create-1">create/1</a></td><td></td></tr><tr><td valign="top"><a href="#default_join_options-0">default_join_options/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_closest_pid-1">get_closest_pid/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_graph-1">get_graph/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_local_members-1">get_local_members/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_members-1">get_members/1</a></td><td></td></tr><tr><td valign="top"><a href="#join-2">join/2</a></td><td></td></tr><tr><td valign="top"><a href="#join-3">join/3</a></td><td></td></tr><tr><td valign="top"><a href="#leave-2">leave/2</a></td><td></td></tr><tr><td valign="top"><a href="#which_groups-0">which_groups/0</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#broadcast-2">broadcast/2</a></td><td></td></tr><tr><td valign="top"><a href="#create-1">create/1</a></td><td></td></tr><tr><td valign="top"><a href="#default_join_options-0">default_join_options/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_closest_member-1">get_closest_member/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_local_members-1">get_local_members/1</a></td><td></td></tr><tr><td valign="top"><a href="#get_members-1">get_members/1</a></td><td></td></tr><tr><td valign="top"><a href="#join-2">join/2</a></td><td>Equivalent to <a href="#join-3"><tt>join(Group, Member, default_join_options())</tt></a>.</td></tr><tr><td valign="top"><a href="#join-3">join/3</a></td><td></td></tr><tr><td valign="top"><a href="#leave-1">leave/1</a></td><td></td></tr><tr><td valign="top"><a href="#which_groups-0">which_groups/0</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
@@ -71,7 +111,7 @@ name() = term()
 ### broadcast/2 ###
 
 <pre><code>
-broadcast(Group::<a href="#type-name">name()</a>, Message::term()) -&gt; ok | {error, {no_such_group, <a href="#type-name">name()</a>}}
+broadcast(Peer::<a href="#type-peer">peer()</a>, Message::<a href="#type-message">message()</a>) -&gt; ok
 </code></pre>
 <br />
 
@@ -102,22 +142,12 @@ delete(Group::<a href="#type-name">name()</a>) -&gt; ok
 </code></pre>
 <br />
 
-<a name="get_closest_pid-1"></a>
+<a name="get_closest_member-1"></a>
 
-### get_closest_pid/1 ###
-
-<pre><code>
-get_closest_pid(Group::<a href="#type-name">name()</a>) -&gt; pid() | {error, Reason}
-</code></pre>
-
-<ul class="definitions"><li><code>Reason = {no_process, <a href="#type-name">name()</a>} | {no_such_group, <a href="#type-name">name()</a>}</code></li></ul>
-
-<a name="get_graph-1"></a>
-
-### get_graph/1 ###
+### get_closest_member/1 ###
 
 <pre><code>
-get_graph(Group::<a href="#type-name">name()</a>) -&gt; <a href="#type-communication_graph">communication_graph()</a> | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -126,7 +156,7 @@ get_graph(Group::<a href="#type-name">name()</a>) -&gt; <a href="#type-communica
 ### get_local_members/1 ###
 
 <pre><code>
-get_local_members(Group::<a href="#type-name">name()</a>) -&gt; [pid()] | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_local_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -135,7 +165,7 @@ get_local_members(Group::<a href="#type-name">name()</a>) -&gt; [pid()] | {error
 ### get_members/1 ###
 
 <pre><code>
-get_members(Group::<a href="#type-name">name()</a>) -&gt; [pid()] | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -144,25 +174,27 @@ get_members(Group::<a href="#type-name">name()</a>) -&gt; [pid()] | {error, {no_
 ### join/2 ###
 
 <pre><code>
-join(Group::<a href="#type-name">name()</a>, Member::pid()) -&gt; ok | {error, {no_such_group, <a href="#type-name">name()</a>}}
+join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>) -&gt; {ok, <a href="#type-peer">peer()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
+
+Equivalent to [`join(Group, Member, default_join_options())`](#join-3).
 
 <a name="join-3"></a>
 
 ### join/3 ###
 
 <pre><code>
-join(Group::<a href="#type-name">name()</a>, Member::pid(), Options::<a href="#type-join_options">join_options()</a>) -&gt; ok | {error, {no_such_group, <a href="#type-name">name()</a>}}
+join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>, Options::<a href="#type-join_options">join_options()</a>) -&gt; {ok, Peer::<a href="#type-peer">peer()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
-<a name="leave-2"></a>
+<a name="leave-1"></a>
 
-### leave/2 ###
+### leave/1 ###
 
 <pre><code>
-leave(Group::<a href="#type-name">name()</a>, Member::pid()) -&gt; ok | {error, {no_such_group, <a href="#type-name">name()</a>}}
+leave(Peer::<a href="#type-peer">peer()</a>) -&gt; ok
 </code></pre>
 <br />
 
