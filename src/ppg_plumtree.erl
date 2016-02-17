@@ -44,7 +44,7 @@
 -record(schedule,
         {
           timer = make_ref()          :: reference(),
-          queue = pairing_heaps:new() :: pairing_heaps:heap({ppg_util:milliseconds(), event()})
+          queue = ppg_pq:new() :: ppg_pq:heap({ppg_util:milliseconds(), event()})
         }).
 
 -define(TREE, ?MODULE).
@@ -261,7 +261,7 @@ handle_graft(MsgId, Connection, Tree0) ->
 -spec handle_schedule(ppg_util:milliseconds(), tree()) -> tree().
 handle_schedule(Now, Tree0) ->
     Schedule = Tree0#?TREE.schedule,
-    case pairing_heaps:out(Schedule#schedule.queue) of
+    case ppg_pq:out(Schedule#schedule.queue) of
         empty                          -> Tree0;
         {{Time, _}, _} when Time > Now ->
             %% まだ指定時間に到達していない
@@ -287,9 +287,9 @@ handle_schedule(Now, Tree0) ->
 schedule(infinity, _,  Schedule) -> Schedule;
 schedule(After, Event, Schedule) ->
     ExecutionTime = ppg_util:now_ms() + After,
-    Queue = pairing_heaps:in({ExecutionTime, Event}, Schedule#schedule.queue),
-    case pairing_heaps:peek(Schedule#schedule.queue) of
-        {{Next, _}, _} when Next =< ExecutionTime ->
+    Queue = ppg_pq:in({ExecutionTime, Event}, Schedule#schedule.queue),
+    case ppg_pq:peek(Schedule#schedule.queue) of
+        {Next, _} when Next =< ExecutionTime ->
             Schedule#schedule{queue = Queue};
         _ ->
             Timer = ppg_util:cancel_and_send_after(Schedule#schedule.timer, After, self(), {?MODULE, schedule}),
