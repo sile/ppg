@@ -102,7 +102,7 @@ leave_test_() ->
       [
        {"Leaves a group",
         fun () ->
-                Num = 10, % TODO: => 100
+                Num = 20, % TODO: => 100
                 lists:foreach(fun (_) -> ppg:join(Group) end, lists:seq(1, Num)),
                 timer:sleep(100), % TODO: delete
 

@@ -79,6 +79,7 @@ get_graph(Group) ->
 %%         Peer            -> ppg_peer:get_destination(Peer)
 %%     end.
 
+%% TODO: ppg_peer:peer()を返して、利用者側がlink or monitor or ignoreを選択可能にする
 -spec join(name()) -> ok.
 join(Group) ->
     case ppg_peer_sup:push_member(Group, self()) of

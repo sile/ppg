@@ -8,6 +8,8 @@
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
 -export([foreach/2]).
+-export([filtermap/2]).
+-export([any/2]).
 -export([random_key/1, random_key/2]).
 -export([random_keys/2]).
 
@@ -17,6 +19,27 @@
 -spec foreach(fun ((term(), term()) -> any()), #{}) -> ok.
 foreach(Fun, Map) ->
     maps:fold(fun (K, V, _) -> _ = Fun(K, V), ok end, ok, Map).
+
+-spec filtermap(fun ((term(), term()) -> boolean() | {true, term()}), #{}) -> #{}.
+filtermap(Fun, Map) ->
+    maps:fold(
+      fun (K, V, Acc) ->
+              case Fun(K, V) of
+                  false     -> Acc;
+                  true      -> maps:put(K, V, Acc);
+                  {true, W} -> maps:put(K, W, Acc)
+              end
+      end,
+      #{},
+      Map).
+
+-spec any(fun ((term(), term()) -> boolean()), #{}) -> boolean().
+any(Fun, Map) ->
+    maps:fold(fun (_, _, true) -> true;
+                  (K, V, _)    -> Fun(K, V)
+              end,
+              false,
+              Map).
 
 -spec random_key(#{}) -> {ok, term()} | error.
 random_key(Map) ->

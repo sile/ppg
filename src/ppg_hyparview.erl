@@ -3,77 +3,69 @@
 %% @doc A Peer Sampling Service Implementation based HyParView Algorithm
 %%
 %% @reference See http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf
+%% @private
 -module(ppg_hyparview).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([guess_options/1]).
--export([new/1, new/2]).
+-export([default_options/0]).
 
+-export([new/1, new/2]).
 -export([join/1]).
 -export([get_peers/1]).
+-export([flush_queue/1]).
 -export([handle_info/2]).
 
--export([flush_queue/1]).
-
 -export_type([view/0]).
+-export_type([connection/0]).
 -export_type([options/0, option/0]).
--export_type([connection_id/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
 %%----------------------------------------------------------------------------------------------------------------------
--ifdef(DEBUG).
--define(TAG_JOIN, 16#00).
--define(TAG_FORWARD_JOIN, 16#01).
--define(TAG_CONNECT, 16#02).
--define(TAG_DISCONNECT, 16#03).
--define(TAG_NEIGHBOR, 16#04).
--define(TAG_FOREIGNER, 16#05).
--define(TAG_SHUFFLE, 16#06).
--define(TAG_SHUFFLEREPLY, 16#07).
--define(TAG_CONNECTIVITY, 16#08).
--else.
--define(TAG_JOIN, 'JOIN').
+-define(TAG_JOIN,         'JOIN').
 -define(TAG_FORWARD_JOIN, 'FORWARD_JOIN').
--define(TAG_CONNECT, 'CONNECT').
--define(TAG_DISCONNECT, 'DISCONNECT').
--define(TAG_NEIGHBOR, 'NEIGHBOR').
--define(TAG_FOREIGNER, 'FOREIGNER').
--define(TAG_SHUFFLE, 'SHUFFLE').
+-define(TAG_CONNECT,      'CONNECT').
+-define(TAG_DISCONNECT,   'DISCONNECT').
+-define(TAG_NEIGHBOR,     'NEIGHBOR').
+-define(TAG_FOREIGNER,    'FOREIGNER').
+-define(TAG_SHUFFLE,      'SHUFFLE').
 -define(TAG_SHUFFLEREPLY, 'SHUFFLEREPLY').
 -define(TAG_CONNECTIVITY, 'CONNECTIVITY').
--endif.
 
 -define(VIEW, ?MODULE).
-
 -record(?VIEW,
         {
-          %% Dynamic Fields
-          active_view = #{}          :: #{ppg_peer:peer() => connection_id()},
-          passive_view = #{}         :: #{ppg_peer:peer() => ok},
-          monitors = #{}             :: #{ppg_peer:peer() => reference()},
+          %% Peers(View) Management
+          active_view  = #{} :: #{ppg_peer:peer() => connection()},
+          passive_view = #{} :: #{ppg_peer:peer() => ok},
+          monitors     = #{} :: #{ppg_peer:peer() => reference()},
 
-          shuffle_timer = make_ref() :: reference(),
+          %% Timers
+          shuffle_timer      = make_ref() :: reference(),
           connectivity_timer = make_ref() :: reference(),
-          rejoin_timer = make_ref()  :: reference(),
+          rejoin_timer       = make_ref() :: reference(),
 
+          %% Internal Event Queue
           queue = [] :: [event()],
 
-          sequence = 0 :: non_neg_integer(),
+          %% Contact Service
+          contact_service :: ppg_contact_service:service(),
 
-          %% Static Fields
-          contact_service            :: ppg_contact_service:service(),
-          active_view_size           :: pos_integer(),
-          passive_view_size          :: pos_integer(),
-          active_random_walk_length  :: pos_integer(),
-          passive_random_walk_length :: pos_integer(),
-          shuffle_count              :: pos_integer(),
-          shuffle_interval           :: timeout()
+          %% Protocol Parameters
+          active_view_size               :: pos_integer(),
+          passive_view_size              :: pos_integer(),
+          active_random_walk_length      :: pos_integer(),
+          passive_random_walk_length     :: pos_integer(),
+          shuffle_count                  :: pos_integer(),
+          shuffle_interval               :: timeout(),
+          max_broadcast_delay            :: timeout(),
+          allowable_disconnection_period :: timeout()
         }).
 
 -opaque view() :: #?VIEW{}.
+-opaque connection() :: reference().
 
 -type options() :: [option()].
 
@@ -82,48 +74,43 @@
                 | {active_random_walk_length, pos_integer()}
                 | {passive_random_walk_length, pos_integer()}
                 | {shuffle_count, pos_integer()}
-                | {shuffle_interval, timeout()}.
-
--type connection_id() :: non_neg_integer().
+                | {shuffle_interval, timeout()}
+                | {max_broadcast_delay, timeout()}
+                | {allowable_disconnection_period, timeout()}.
 
 -type ttl() :: non_neg_integer().
 %% Time To Live
 
--type event() :: {up, {connection_id(), ppg_peer:peer()}}
-               | {down, {connection_id(), ppg_peer:peer()}}
+-type event() :: {up, ppg_peer:peer(), connection()}
+               | {down, ppg_peer:peer(), connection()}
                | {broadcast, term()}.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec guess_options(pos_integer()) -> options().
-guess_options(GroupSizeHint) ->
-    _ = is_integer(GroupSizeHint) andalso GroupSizeHint > 0 orelse error(badarg, [GroupSizeHint]),
-
-    ActiveViewSize = max(2, round(math:log10(GroupSizeHint) + 1)),
-    PassiveViewSize = ActiveViewSize * 6,
-    ActiveRandomWalkLength = max(2, round(math:log(GroupSizeHint) / math:log(ActiveViewSize) + 2)),
-    PassiveRandomWalkLength = ActiveRandomWalkLength div 2,
-    ShuffleCount = max(3, PassiveViewSize div 5),
-    ShuffleInterval = 5 * 60 * 1000,
+%% NOTE: 1000ノードくらいまでならこのパラメータで十分
+-spec default_options() -> options().
+default_options() ->
     [
-     {active_view_size, ActiveViewSize},
-     {passive_view_size, PassiveViewSize},
-     {active_random_walk_length, ActiveRandomWalkLength},
-     {passive_random_walk_length, PassiveRandomWalkLength},
-     {shuffle_count, ShuffleCount},
-     {shuffle_interval, ShuffleInterval}
+     {active_view_size, 4},
+     {passive_view_size, 24},
+     {active_random_walk_length, 6},
+     {passive_random_walk_length, 3},
+     {shuffle_count, 4},
+     {shuffle_interval, 10 * 60 * 1000},
+     {max_broadcast_delay, 10 * 1000},
+     {allowable_disconnection_period, 60 * 1000}
     ].
 
-%% @equiv new(Group, guess_options(100))
+%% @equiv new(Group, default_options())
 -spec new(ppg:name()) -> view().
 new(Group) ->
-    new(Group, guess_options(100)).
+    new(Group, default_options()).
 
 -spec new(ppg:name(), options()) -> view().
 new(Group, Options0) ->
     _ = is_list(Options0) orelse error(badarg, [Options0]),
-    Options1 = Options0 ++ guess_options(100),
+    Options1 = Options0 ++ default_options(),
 
     Get =
         fun (Key, Validate) ->
@@ -131,7 +118,7 @@ new(Group, Options0) ->
                 _ = Validate(Value) orelse error(badarg, [Options0]),
                 Value
         end,
-    View0 =
+    View =
         #?VIEW{
             contact_service = ppg_contact_service:new(Group),
             active_view_size = Get(active_view_size, fun ppg_util:is_pos_integer/1),
@@ -139,23 +126,30 @@ new(Group, Options0) ->
             active_random_walk_length = Get(active_random_walk_length, fun ppg_util:is_pos_integer/1),
             passive_random_walk_length = Get(passive_random_walk_length, fun ppg_util:is_pos_integer/1),
             shuffle_count = Get(shuffle_count, fun ppg_util:is_pos_integer/1),
-            shuffle_interval = Get(shuffle_interval, fun ppg_util:is_timeout/1)
+            shuffle_interval = Get(shuffle_interval, fun ppg_util:is_timeout/1),
+            max_broadcast_delay = Get(max_broadcast_delay, fun ppg_util:is_timeout/1),
+            allowable_disconnection_period = Get(allowable_disconnection_period, fun ppg_util:is_timeout/1)
            },
-    View1 = schedule_shuffle(View0),
-    View1.
+    schedule_shuffle(View).
 
--spec get_peers(view()) -> [connection_id()].
-get_peers(#?VIEW{active_view = View}) ->
-    maps:fold(fun (K, V, Acc) -> [{V, K} | Acc] end, [], View).
+-spec get_peers(view()) -> [{ppg_peer:peer(), connection()}].
+get_peers(View) ->
+    maps:to_list(View#?VIEW.active_view).
 
 -spec join(view()) -> view().
 join(View) ->
     ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
-    _ = ContactPeer =/= self() andalso (ContactPeer ! message_join()),
-    View.
+    case ContactPeer =:= self() of
+        true  -> View;
+        false ->
+            _ = ContactPeer ! message_join(),
+            %% Joined peer must be connected with at least one other peer (or timed out in the caller side)
+            receive
+                {?TAG_CONNECT, Arg} -> handle_connect(Arg, View)
+            end
+    end.
 
-%% TODO:
--spec flush_queue(view()) -> {list(), view()}.
+-spec flush_queue(view()) -> {[event()], view()}.
 flush_queue(View) ->
     {lists:reverse(View#?VIEW.queue), View#?VIEW{queue = []}}.
 
@@ -175,8 +169,8 @@ handle_info({'DOWN', Ref, _, Pid, _}, View) ->
     case View of
         #?VIEW{monitors = #{Pid := Ref}} ->
             case View of
-                #?VIEW{active_view = #{Pid := Id}} -> {ok, handle_disconnect({Id, Pid}, true, View)};
-                #?VIEW{passive_view = #{Pid := _}} -> {ok, handle_foreigner(Pid, View)}
+                #?VIEW{active_view = #{Pid := Conn}} -> {ok, handle_disconnect({Conn, Pid}, true, View)};
+                #?VIEW{passive_view = #{Pid := _}}   -> {ok, handle_foreigner(Pid, View)}
             end;
         _ -> ignore
     end;
@@ -206,13 +200,13 @@ handle_forward_join({NewPeer, TimeToLive, Sender}, View) ->
         true  -> add_peers_to_passive_view([NewPeer], View)
     end.
 
--spec handle_connect({connection_id(), ppg_peer:peer()}, view()) -> view().
+-spec handle_connect({connection(), ppg_peer:peer()}, view()) -> view().
 handle_connect({Conn, Peer}, View) ->
     add_peer_to_active_view(Peer, Conn, View).
 
--spec handle_disconnect({connection_id(), ppg_peer:peer()}, boolean(), view()) -> view().
-handle_disconnect({ConnectionId, Peer}, IsPeerDown, View0) ->
-    case disconnect_peer(Peer, ConnectionId, View0) of
+-spec handle_disconnect({connection(), ppg_peer:peer()}, boolean(), view()) -> view().
+handle_disconnect({Connection, Peer}, IsPeerDown, View0) ->
+    case disconnect_peer(Peer, Connection, View0) of
         error       -> View0;
         {ok, View1} ->
             View2 = promote_passive_peer_if_needed(View1),
@@ -233,19 +227,20 @@ handle_neighbor({low,  Peer}, View) ->
 
 -spec handle_foreigner(ppg_peer:peer(), view()) -> view().
 handle_foreigner(Peer, View0) ->
-    View1 = remove_passive_peer(Peer, View0), % TODO: 論文中ではpassiveを削除しない、と書かれているのでそれに合わせる? => 実装の簡潔性を取りたい
+    %% TODO: 論文中ではpassiveを削除しない、と書かれているのでそれに合わせる? => 実装の簡潔性を取りたいので注記付きで今の実装のままにする
+    View1 = remove_passive_peer(Peer, View0),
     promote_passive_peer_if_needed(View1).
 
 -spec handle_shuffle({[ppg_peer:peer()], ttl(), ppg_peer:peer()}, view()) -> view().
-handle_shuffle({[Issuer | _] = Peers, TimeToLive, Sender}, View) ->
-    NextCandidates = maps:without([Issuer, Sender], View#?VIEW.active_view),
+handle_shuffle({[Origin | _] = Peers, TimeToLive, Sender}, View) ->
+    NextCandidates = maps:without([Origin, Sender], View#?VIEW.active_view),
     case {TimeToLive > 0, ppg_maps:random_key(NextCandidates)} of
         {true, {ok, Next}} ->
             _ = Next ! message_shuffle(Peers, TimeToLive - 1),
             View;
         _ ->
             ReplyPeers = ppg_maps:random_keys(length(Peers), View#?VIEW.passive_view),
-            _ = Issuer ! message_shufflereply(ReplyPeers),
+            _ = Origin ! message_shufflereply(ReplyPeers),
             add_peers_to_passive_view(Peers, View)
     end.
 
@@ -260,11 +255,11 @@ start_connectivity_check_if_needed(View) ->
         true  -> View;
         false ->
             %% TODO: より厳格な接続性の保証を行う
-            MaxBroadcastDelay = 10 * 1000, % TODO: optionize
-            After = rand:uniform(60 * 1000 * 2), % TODO: optionize
-            CTimer = ppg_util:cancel_and_send_after(View#?VIEW.connectivity_timer, After, self(), message_connectivity(up)),
-            RTimer = ppg_util:cancel_and_send_after(View#?VIEW.rejoin_timer, After + MaxBroadcastDelay, self(), {?MODULE, rejoin}),
-            View#?VIEW{connectivity_timer = CTimer, rejoin_timer = RTimer}
+            _ = ContactPeer ! message_connectivity(up),
+
+            After = View#?VIEW.allowable_disconnection_period,
+            Timer = ppg_util:cancel_and_send_after(View#?VIEW.rejoin_timer, After, self(), {?MODULE, rejoin}),
+            View#?VIEW{rejoin_timer = Timer}
     end.
 
 -spec schedule_shuffle(view()) -> view().
@@ -292,44 +287,40 @@ handle_start_shuffle(View = #?VIEW{shuffle_count = Count}) ->
 handle_connectivity(up, View) ->
     ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
     case ContactPeer =:= self() of
-        false ->
-            _ = ContactPeer ! message_connectivity(up),
-            View;
-        true ->
-            case erlang:read_timer(View#?VIEW.connectivity_timer) of
+        false -> _ = ContactPeer ! message_connectivity(up), View; % Forwards to the latest contact peer
+        true  ->
+            case erlang:read_timer(View#?VIEW.connectivity_timer) =/= false of
+                true  -> View; % The timer has been set
                 false ->
-                    %% TODO: Optionaize
-                    Timer = erlang:send_after(5 * 1000, self(), message_connectivity(kick)),
-                    View#?VIEW{connectivity_timer = Timer};
-                _ ->
-                    View
+                    After = max(0, View#?VIEW.allowable_disconnection_period - View#?VIEW.max_broadcast_delay),
+                    Timer = erlang:send_after(After, self(), message_connectivity(kick)),
+                    View#?VIEW{connectivity_timer = Timer}
             end
     end;
 handle_connectivity(kick, View) ->
     enqueue_event({broadcast, message_connectivity(down)}, View);
 handle_connectivity(down, View) ->
-    _ = erlang:cancel_timer(View#?VIEW.connectivity_timer),
     _ = ppg_util:cancel_and_flush_timer(View#?VIEW.rejoin_timer, {?MODULE, rejoin}),
     View.
 
--spec add_peer_to_active_view(ppg_peer:peer(), connection_id()|undefined, view()) -> view().
-add_peer_to_active_view(Peer,_ConnectionId, View) when Peer =:= self() ->
+-spec add_peer_to_active_view(ppg_peer:peer(), connection()|undefined, view()) -> view().
+add_peer_to_active_view(Peer,_Connection, View) when Peer =:= self() ->
     View;
-add_peer_to_active_view(Peer, ConnectionId, View0) ->
+add_peer_to_active_view(Peer, Connection, View0) ->
     case maps:find(Peer, View0#?VIEW.active_view) of
         error ->
             %% A new peer; We add the peer to the active view
             View1 = ensure_active_view_free_space(View0),
-            connect_to_peer(Peer, ConnectionId, View1);
-        {ok, ExistingId} ->
+            connect_to_peer(Peer, Connection, View1);
+        {ok, Established} ->
             %% The peer already exists in the active view
-            case ConnectionId =:= undefined orelse ConnectionId =< ExistingId of
-                true  -> View0; % `ExistingId' is up to date (ignores `ConnectionId')
+            case Connection =:= undefined orelse Connection =< Established of
+                true  -> View0; % `Established' is up to date (ignores `Connection')
                 false ->
-                    %% `ExistingId' is out of date (implicitly reconnected)
-                    View1 = enqueue_event({down, {ExistingId, Peer}}, View0),
-                    View2 = enqueue_event({up, {ConnectionId, Peer}}, View1),
-                    View2#?VIEW{active_view = maps:put(Peer, ConnectionId, View1#?VIEW.active_view)}
+                    %% `Established' is out of date (implicitly reconnected)
+                    View1 = enqueue_event({down, Peer, Established}, View0),
+                    View2 = enqueue_event({up, Peer, Connection}, View1),
+                    View2#?VIEW{active_view = maps:put(Peer, Connection, View1#?VIEW.active_view)}
             end
     end.
 
@@ -344,27 +335,27 @@ ensure_active_view_free_space(View0) ->
             ensure_active_view_free_space(View2)
     end.
 
--spec connect_to_peer(ppg_peer:peer(), connection_id()|undefined, view()) -> view().
-connect_to_peer(Peer, undefined, View0) ->
-    {ConnectionId, View1} = make_connection_id(Peer, View0),
-    _ = Peer ! message_connect(ConnectionId),
-    connect_to_peer(Peer, ConnectionId, View1);
-connect_to_peer(Peer, ConnectionId, View0) ->
+-spec connect_to_peer(ppg_peer:peer(), connection()|undefined, view()) -> view().
+connect_to_peer(Peer, undefined, View) ->
+    Connection = make_ref(),
+    _ = Peer ! message_connect(Connection),
+    connect_to_peer(Peer, Connection, View);
+connect_to_peer(Peer, Connection, View0) ->
     View1 = remove_passive_peer(Peer, View0),
-    View2 = enqueue_event({up, {ConnectionId, Peer}}, View1),
-    ActiveView = maps:put(Peer, ConnectionId, View2#?VIEW.active_view),
+    View2 = enqueue_event({up, Peer, Connection}, View1),
+    ActiveView = maps:put(Peer, Connection, View2#?VIEW.active_view),
     Monitors = maps:put(Peer, monitor(process, Peer), View2#?VIEW.monitors),
     View2#?VIEW{active_view = ActiveView, monitors = Monitors}.
 
--spec disconnect_peer(ppg_peer:peer(), connection_id()|undefined, view()) -> {ok, view()} | error.
+-spec disconnect_peer(ppg_peer:peer(), connection()|undefined, view()) -> {ok, view()} | error.
 disconnect_peer(Peer, undefined, View) ->
-    ConnectionId = maps:get(Peer, View#?VIEW.active_view),
-    _ = Peer ! message_disconnect(ConnectionId),
-    disconnect_peer(Peer, ConnectionId, View);
-disconnect_peer(Peer, ConnectionId, View0) ->
+    Connection = maps:get(Peer, View#?VIEW.active_view),
+    _ = Peer ! message_disconnect(Connection),
+    disconnect_peer(Peer, Connection, View);
+disconnect_peer(Peer, Connection, View0) ->
     case View0#?VIEW.active_view of
-        #{Peer := ConnectionId} ->
-            View1 = enqueue_event({down, {ConnectionId, Peer}}, View0),
+        #{Peer := Connection} ->
+            View1 = enqueue_event({down, Peer, Connection}, View0),
             _ = demonitor(maps:get(Peer, View1#?VIEW.monitors), [flush]),
             Monitors = maps:remove(Peer, View1#?VIEW.monitors),
             ActiveView = maps:remove(Peer, View1#?VIEW.active_view),
@@ -419,25 +410,24 @@ promote_passive_peer_if_needed(View) ->
             end
     end.
 
--spec make_connection_id(ppg_peer:peer(), view()) -> {connection_id(), view()}.
-make_connection_id(Peer, View = #?VIEW{sequence = Seq}) ->
-    ConnecitonId = Seq * 2 + (case Peer < self() of true -> 0; false -> 1 end),
-    {ConnecitonId, View#?VIEW{sequence = Seq + 1}}.
-
 -spec message_join() -> {?TAG_JOIN, NewPeer::ppg_peer:peer()}.
-message_join() -> {?TAG_JOIN, self()}.
+message_join() ->
+    {?TAG_JOIN, self()}.
 
 -spec message_forward_join(NewPeer, TimeToLive) -> {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, Sender}} when
       NewPeer    :: ppg_peer:peer(),
       TimeToLive :: pos_integer(),
       Sender     :: ppg_peer:peer().
-message_forward_join(NewPeer, TimeToLive) -> {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, self()}}.
+message_forward_join(NewPeer, TimeToLive) ->
+    {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, self()}}.
 
--spec message_connect(connection_id()) -> {?TAG_CONNECT, {connection_id(), ppg_peer:peer()}}.
-message_connect(Conn) -> {?TAG_CONNECT, {Conn, self()}}.
+-spec message_connect(connection()) -> {?TAG_CONNECT, {connection(), ppg_peer:peer()}}.
+message_connect(Conn) ->
+    {?TAG_CONNECT, {Conn, self()}}.
 
--spec message_disconnect(connection_id()) -> {?TAG_DISCONNECT, {connection_id(), ppg_peer:peer()}}.
-message_disconnect(Conn) -> {?TAG_DISCONNECT, {Conn, self()}}.
+-spec message_disconnect(connection()) -> {?TAG_DISCONNECT, {connection(), ppg_peer:peer()}}.
+message_disconnect(Conn) ->
+    {?TAG_DISCONNECT, {Conn, self()}}.
 
 -spec message_neighbor(view()) -> {?TAG_NEIGHBOR, {high|low, ppg_peer:peer()}}.
 message_neighbor(#?VIEW{active_view = ActiveView}) ->
@@ -445,14 +435,18 @@ message_neighbor(#?VIEW{active_view = ActiveView}) ->
     {?TAG_NEIGHBOR, {Priority, self()}}.
 
 -spec message_foreigner() -> {?TAG_FOREIGNER, ppg_peer:peer()}.
-message_foreigner() -> {?TAG_FOREIGNER, self()}.
+message_foreigner() ->
+    {?TAG_FOREIGNER, self()}.
 
 -spec message_shuffle(Peers, pos_integer()) -> {?TAG_SHUFFLE, {Peers, pos_integer(), ppg_peer:peer()}} when
       Peers :: [ppg_peer:peer()].
-message_shuffle(Peers, TimeToLive) -> {?TAG_SHUFFLE, {Peers, TimeToLive, self()}}.
+message_shuffle(Peers, TimeToLive) ->
+    {?TAG_SHUFFLE, {Peers, TimeToLive, self()}}.
 
 -spec message_shufflereply([ppg_peer:peer()]) -> {?TAG_SHUFFLEREPLY, [ppg_peer:peer()]}.
-message_shufflereply(Peers) -> {?TAG_SHUFFLEREPLY, Peers}.
+message_shufflereply(Peers) ->
+    {?TAG_SHUFFLEREPLY, Peers}.
 
 -spec message_connectivity(up|kick|down) -> {?TAG_CONNECTIVITY, up|kick|down}.
-message_connectivity(Direction) -> {?TAG_CONNECTIVITY, Direction}.
+message_connectivity(Direction) ->
+    {?TAG_CONNECTIVITY, Direction}.
