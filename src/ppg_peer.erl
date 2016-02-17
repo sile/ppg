@@ -14,7 +14,6 @@
 -export([get_graph/2]).
 -export([get_destination/1]).
 -export([broadcast/2]).
--export([async_broadcast/2]).
 
 -export_type([peer/0]).
 -export_type([contact_peer/0]).
@@ -54,10 +53,6 @@ stop(Peer) ->
 -spec broadcast(local:otp_ref(), term()) -> ok.
 broadcast(Peer, Message) ->
     gen_server:call(Peer, {broadcast, Message}).
-
--spec async_broadcast(local:otp_ref(), term()) -> ok.
-async_broadcast(Peer, Message) ->
-    gen_server:cast(Peer, {broadcast, Message}).
 
 -spec get_destination(local:otp_ref()) -> pid().
 get_destination(Peer) ->
@@ -112,9 +107,6 @@ handle_call(_Request, _From, State) ->
     {noreply, State}.
 
 %% @private
-handle_cast({broadcast, Arg}, State) ->
-    {reply, _, State1} = handle_broadcast(Arg, State),
-    {noreply, State1};
 handle_cast({get_graph, Arg}, State) ->
     handle_get_graph(Arg, State);
 handle_cast(_Request, State) ->
@@ -128,9 +120,9 @@ handle_info(Info, State) ->
             {Queue, View1} = ppg_hyparview:flush_queue(View),
             Tree =
                 lists:foldl(
-                  fun ({up, Peer, Conn},   Acc) -> ppg_plumtree:neighbor_up(Peer, Conn, Acc);
+                  fun ({up, Peer, Conn},  Acc) -> ppg_plumtree:neighbor_up(Peer, Conn, Acc);
                       ({down, Peer,Conn}, Acc) -> ppg_plumtree:neighbor_down(Peer, Conn, Acc);
-                      ({broadcast, Msg},  Acc) -> async_broadcast(self(), {'INTERNAL', Msg}), Acc
+                      ({broadcast, Msg},  Acc) -> ppg_plumtree:system_broadcast(Msg, Acc)
                   end,
                   State#?STATE.tree,
                   Queue),
@@ -142,6 +134,10 @@ handle_info(Info, State) ->
                     case Info of
                         {'DOWN', _, _, Pid, _} when Pid =:= State#?STATE.destination ->
                             {stop, normal, State};
+                        {?MODULE, get_graph, {Tag, From}} ->
+                            Tree = State#?STATE.tree,
+                            _ = From ! {Tag, {self(), ppg_plumtree:get_member(Tree), ppg_plumtree:get_peers(Tree)}},
+                            {noreply, State};
                         _ ->
                             {stop, {unknown_info, Info}, State}
                             %% {noreply, State} TODO:
@@ -175,5 +171,5 @@ handle_broadcast(Message, State) ->
 
 -spec handle_get_graph({reference(), pid()}, #?STATE{}) -> {noreply, #?STATE{}}.
 handle_get_graph(Requestor, State) ->
-    Tree = ppg_plumtree:broadcast({'SYSTEM', get_graph, Requestor}, State#?STATE.tree),
+    Tree = ppg_plumtree:system_broadcast({?MODULE, get_graph, Requestor}, State#?STATE.tree),
     {noreply, State#?STATE{tree = Tree}}.

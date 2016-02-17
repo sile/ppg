@@ -255,11 +255,14 @@ start_connectivity_check_if_needed(View) ->
         true  -> View;
         false ->
             %% TODO: より厳格な接続性の保証を行う
-            _ = ContactPeer ! message_connectivity(up),
-
-            After = View#?VIEW.allowable_disconnection_period,
-            Timer = ppg_util:cancel_and_send_after(View#?VIEW.rejoin_timer, After, self(), {?MODULE, rejoin}),
-            View#?VIEW{rejoin_timer = Timer}
+            case is_integer(erlang:read_timer(View#?VIEW.rejoin_timer)) of
+                true  -> View;
+                false ->
+                    _ = ContactPeer ! message_connectivity(up),
+                    After = View#?VIEW.allowable_disconnection_period,
+                    Timer = erlang:send_after(After, self(), {?MODULE, rejoin}),
+                    View#?VIEW{rejoin_timer = Timer}
+            end
     end.
 
 -spec schedule_shuffle(view()) -> view().

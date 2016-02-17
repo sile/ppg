@@ -1,75 +1,134 @@
 %% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
 %%
-%% @doc TODO
+%% @doc A Plumtree Implementation
+%%
+%% @reference See http://homepages.gsd.inesc-id.pt/~jleitao/pdf/srds07-leitao.pdf
 %% @private
 -module(ppg_plumtree).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([new/2]).
+-export([default_options/0]).
+
+-export([new/2, new/3]).
 -export([broadcast/2]).
+-export([system_broadcast/2]).
 -export([handle_info/2]).
--export([get_entry/1]).
 -export([neighbor_up/3]).
 -export([neighbor_down/3]).
+-export([get_member/1]).
+-export([get_peers/1]).
 
 -export_type([tree/0]).
+-export_type([options/0, option/0]).
+-export_type([peer/0]).
+-export_type([peer_type/0]).
+-export_type([message/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
 %%----------------------------------------------------------------------------------------------------------------------
 -define(TAG_GOSSIP, 'GOSSIP').
--define(TAG_IHAVE, 'IHAVE').
--define(TAG_PRUNE, 'PRUNE').
--define(TAG_GRAFT, 'GRAFT').
-
--define(TREE, ?MODULE).
+-define(TAG_IHAVE,  'IHAVE').
+-define(TAG_WEHAVE, 'WEHAVE').
+-define(TAG_PRUNE,  'PRUNE').
+-define(TAG_GRAFT,  'GRAFT').
 
 -record(peer,
         {
           pid                      :: ppg_peer:peer(),
-          type = eager             :: eager | lazy,
-          nohave = gb_sets:empty() :: gb_sets:set(msg_id()) % TODO: 一定サイズを超えたらpeerをkill|disconnectする
+          type = eager             :: peer_type(),
+          nohave = gb_sets:empty() :: gb_sets:set(message_id())
         }).
 
 -record(schedule,
         {
-          timer = make_ref() :: reference(),
-          queue = pairing_heaps:new() :: pairing_heaps:heap({milliseconds(), {ihave|done, msg_id()}})
+          timer = make_ref()          :: reference(),
+          queue = pairing_heaps:new() :: pairing_heaps:heap({ppg_util:milliseconds(), event()})
         }).
 
+-define(TREE, ?MODULE).
 -record(?TREE,
         {
-          member                      :: ppg:member(),
-          connections                 :: #{connection() => #peer{}},
-          missing = #{}               :: #{msg_id() => IHave::[connection()]},
-          received = #{}              :: #{msg_id() => message()},
-          delivered = gb_sets:empty() :: gb_sets:set(msg_id()),
-          schedule = #schedule{}      :: #schedule{},
+          %% Group Member
+          member :: ppg:member(), % The destination process of broadcasted messages
 
-          max_nohave_count = 100 :: pos_integer(),
-          done_timeout = 1000 :: milliseconds(), % XXX: name
-          ihave_timeout = 100 :: timeout()
+          %% Peers and Messages Management
+          connections              :: #{connection() => #peer{}},
+          missing = #{}            :: #{message_id() => [Owner::connection()]},
+          ihave = #{}              :: #{message_id() => message()},
+          wehave = gb_sets:empty() :: gb_sets:set(message_id()),
+
+          %% Internal Event Scheduler
+          schedule = #schedule{} :: #schedule{},
+
+          %% Protocol Parameters
+          ihave_timeout           :: timeout(),
+          wehave_retention_period :: timeout(),
+          max_nohave_count        :: pos_integer()
         }).
 
 -opaque tree() :: #?TREE{}.
 
--type msg_id() :: reference().
--type message() :: term().
+-type options() :: [option()].
 
--type milliseconds() :: non_neg_integer(). % TODO: timeout()
+%% TODO: rename
+-type option() :: {ihave_timeout, timeout()}
+                | {wehave_retention_period, timeout()}
+                | {max_nohave_count, pos_integer()}. % => max_history_size(?)
+
+-type peer_type() :: eager | lazy.
+
+-type peer() :: #{
+            pid        => ppg_peer:peer(),
+            connection => ppg_hyparview:connection(),
+            type       => peer_type(),
+            nohaves    => non_neg_integer()
+           }.
+
+-type event() :: {ihave_timeout, message_id(), connection()}
+               | {wehave_expire, message_id()}.
+
+-type message_id() :: reference().
+-type message_type() :: 'APP' | 'SYS'.
+-type message() :: {message_type(), ppg:message()}.
 
 -type connection() :: ppg_hyparview:connection().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
+-spec default_options() -> options().
+default_options() ->
+    [
+     {ihave_timeout, 50},
+     {wehave_retention_period, 5 * 1000},
+     {max_nohave_count, 1000}
+    ].
+
+%% @equiv new(Member, Peers, default_options())
 -spec new(ppg:member(), [{ppg_peer:peer(), connection()}]) -> tree().
 new(Member, Peers) ->
+    new(Member, Peers, default_options()).
+
+-spec new(ppg:member(), [{ppg_peer:peer(), connection()}], options()) -> tree().
+new(Member, Peers, Options0) ->
+    _ = is_list(Options0) orelse error(badarg, [Member, Peers, Options0]),
+    Options1 = Options0 ++ default_options(),
+    Get =
+        fun (Key, Validate) ->
+                Value = proplists:get_value(Key, Options1),
+                _ = Validate(Value) orelse error(badarg, [Member, Peers, Options0]),
+                Value
+        end,
+
     #?TREE{
-        member      = Member,
-        connections = maps:from_list([{C, #peer{pid = P}}|| {P, C} <- Peers])
+        member                  = Member,
+        connections             = maps:from_list([{C, #peer{pid = P}}|| {P, C} <- Peers]),
+        ihave_timeout           = Get(ihave_timeout, fun ppg_util:is_timeout/1),
+        wehave_retention_period = Get(wehave_retention_period, fun ppg_util:is_timeout/1),
+        max_nohave_count        = Get(max_nohave_count, fun ppg_util:is_pos_integer/1)
        }.
 
 -spec neighbor_up(ppg_peer:peer(), connection(), tree()) -> tree().
@@ -80,23 +139,17 @@ neighbor_up(PeerPid, Connection, Tree) ->
                           gb_sets:add(MsgId, Acc)
                   end,
                   gb_sets:empty(),
-                  Tree#?TREE.received),
+                  Tree#?TREE.ihave),
     Connections = maps:put(Connection, #peer{pid = PeerPid, nohave = Nohave}, Tree#?TREE.connections),
     Tree#?TREE{connections = Connections}.
 
 -spec neighbor_down(ppg_peer:peer(), connection(), tree()) -> tree().
-neighbor_down(_, Connection, Tree) ->
-    Connections = maps:remove(Connection, Tree#?TREE.connections),
-    {Received, Delivered, Schedule} =
-        maps:fold(
-          fun (MsgId, Message, {AccR, AccD, AccS}) ->
-                  case is_delivered(MsgId, Connections) of
-                      true  -> {AccR, gb_sets:add(MsgId, AccD), schedule(Tree#?TREE.done_timeout, {done, MsgId}, AccS)};
-                      false -> {maps:put(MsgId, Message, AccR), AccD, AccS}
-                  end
-          end,
-          {#{}, Tree#?TREE.delivered, Tree#?TREE.schedule},
-          Tree#?TREE.received),
+neighbor_down(_, Connection, Tree0) ->
+    Connections = maps:remove(Connection, Tree0#?TREE.connections),
+    Tree1 =
+        maps:fold(fun (MsgId, _, Acc) -> move_to_wehave_if_satisfied(MsgId, Acc) end,
+                  Tree0#?TREE{connections = Connections},
+                  Tree0#?TREE.ihave),
     Missing =
         ppg_maps:filtermap(
           fun (_, IhaveList) ->
@@ -105,125 +158,164 @@ neighbor_down(_, Connection, Tree) ->
                       List -> {true, List}
                   end
           end,
-          Tree#?TREE.missing),
-    Tree#?TREE{connections = Connections, received = Received, missing = Missing, delivered = Delivered, schedule = Schedule}.
+          Tree1#?TREE.missing),
+    Tree1#?TREE{missing = Missing}.
 
--spec broadcast(term(), tree()) -> tree().
-broadcast(Message, Tree0) ->
+-spec broadcast(ppg:message(), tree()) -> tree().
+broadcast(Message, Tree) ->
     MsgId = make_ref(),
-    Tree1 = push(MsgId, Message, undefined, Tree0),
-    Tree2 = received(MsgId, Message, [], Tree1),
-    deliver(Message, Tree2).
+    push_and_deliver(MsgId, {'APP', Message}, undefined, Tree).
 
--spec get_entry(tree()) -> Todo::term(). % TODO: Return message history size
-get_entry(Tree) ->
-    {self(), Tree#?TREE.member, Tree#?TREE.connections}.
+-spec system_broadcast(ppg:message(), tree()) -> tree().
+system_broadcast(Message, Tree) ->
+    MsgId = make_ref(),
+    push_and_deliver(MsgId, {'SYS', Message}, undefined, Tree).
+
+-spec get_member(tree()) -> ppg:member().
+get_member(#?TREE{member = Member}) ->
+    Member.
+
+-spec get_peers(tree()) -> [peer()].
+get_peers(#?TREE{connections = Connections}) ->
+    maps:fold(
+      fun (Connection, Peer, Acc) ->
+              [#{
+                  pid        => Peer#peer.pid,
+                  connection => Connection,
+                  type       => Peer#peer.type,
+                  nohaves    => gb_sets:size(Peer#peer.nohave)
+                } | Acc]
+      end,
+      [],
+      Connections).
 
 -spec handle_info(term(), tree()) -> {ok, tree()} | ignore.
-handle_info({?TAG_GOSSIP, Connection, Arg}, Tree) -> handle_gossip(Arg, Connection, Tree);
-handle_info({?TAG_IHAVE,  Connection, Arg}, Tree) -> handle_ihave(Arg, Connection, Tree);
-handle_info({?TAG_PRUNE,  Connection},      Tree) -> handle_prune(Connection, Tree);
-handle_info({?TAG_GRAFT,  Connection, Arg}, Tree) -> handle_graft(Arg, Connection, Tree);
-handle_info({?MODULE, schedule},            Tree) -> handle_schedule(now_ms(), Tree);
+handle_info({?TAG_GOSSIP, Connection, Arg}, Tree) -> {ok, handle_gossip(Arg, Connection, Tree)};
+handle_info({?TAG_IHAVE,  Connection, Arg}, Tree) -> {ok, handle_ihave(Arg, Connection, Tree)};
+handle_info({?TAG_WEHAVE, Connection, Arg}, Tree) -> {ok, handle_wehave(Arg, Connection, Tree)};
+handle_info({?TAG_PRUNE,  Connection},      Tree) -> {ok, handle_prune(Connection, Tree)};
+handle_info({?TAG_GRAFT,  Connection, Arg}, Tree) -> {ok, handle_graft(Arg, Connection, Tree)};
+handle_info({?MODULE, schedule},            Tree) -> {ok, handle_schedule(ppg_util:now_ms(), Tree)};
 handle_info(_Info, _Tree)                         -> ignore.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec handle_gossip({msg_id(), message()}, connection(), tree()) -> {ok, tree()}.
+-spec handle_gossip({message_id(), message()}, connection(), tree()) -> tree().
 handle_gossip({MsgId, Message}, Connection, Tree0) ->
     case maps:find(Connection, Tree0#?TREE.connections) of
-        error      -> {ok, Tree0}; % `Connection' has been disconnected
+        error      -> Tree0; % `Connection' has been disconnected
         {ok, Peer} ->
-            case message_type(MsgId, Tree0) of
-                delivered ->
+            case message_status(MsgId, Tree0) of
+                wehave ->
                     %% 配送完了後に追加されたノードからのメッセージ
                     _ = Peer#peer.pid ! message_ihave(Connection, MsgId),
-                    {ok, Tree0};
-                received ->
+                    Tree0;
+                ihave ->
                     %% 別の経路からすでに受信済み
                     _ = Peer#peer.pid ! message_ihave(Connection, MsgId),
                     _ = Peer#peer.pid ! message_prune(Connection),
                     Tree1 = become(lazy, Connection, Tree0),
-                    Tree2 = remove_from_nohave(MsgId, Connection, Tree1),
-                    {ok, Tree2};
-                _ -> % missing | new
-                    Tree1 = deliver(Message, Tree0),
-                    Tree2 = push(MsgId, Message, Connection, Tree1),
-                    Tree3 = become(eager, Connection, Tree2),
-                    Tree4 = received(MsgId, Message, [Connection], Tree3),
-                    {ok, Tree4}
+                    remove_from_nohave(MsgId, Connection, Tree1);
+                nohave ->
+                    Tree1 = become(eager, Connection, Tree0),
+                    push_and_deliver(MsgId, Message, Connection, Tree1)
             end
     end.
 
--spec handle_ihave(msg_id(), connection(), tree()) -> {ok, tree()}.
+-spec handle_ihave(message_id(), connection(), tree()) -> tree().
 handle_ihave(MsgId, Connection, Tree) ->
-    case maps:is_key(Connection, Tree#?TREE.connections) of
-        false -> {ok, Tree}; % `Connection' has been disconnected
-        true  ->
-            case message_type(MsgId, Tree) of
-                delivered -> {ok, Tree}; % TODO: reply ihave(?) => graft時にnohaveに含まれないようになっているなら不要
-                received  -> {ok, remove_from_nohave(MsgId, Connection, Tree)};
-                _         -> {ok, missing(MsgId, Connection, Tree)}
+    case maps:find(Connection, Tree#?TREE.connections) of
+        error      -> Tree; % `Connection' has been disconnected
+        {ok, Peer} ->
+            case message_status(MsgId, Tree) of
+                ihave  -> remove_from_nohave(MsgId, Connection, Tree);
+                nohave -> add_to_missing(MsgId, Connection, Tree);
+                wehave ->
+                    %% `MsgId'の隣人への配送完了後に、新規ノードが追加され、かつ、そのノードが別経路で`MsgId'を受け取った場合に、ここに来る可能性がある
+                    %% (同じメッセージを相互にGOSSIPで送付した場合にも発生する可能性がある。グループ構築直後の重複経路が存在する際に発生しやすい)
+                    _ = Peer#peer.pid ! message_wehave(Connection, MsgId),
+                    Tree
             end
     end.
 
--spec handle_prune(connection(), tree()) -> {ok, tree()}.
+-spec handle_wehave(message_id(), connection(), tree()) -> tree().
+handle_wehave(MsgId, Connection, Tree) ->
+    case maps:is_key(Connection, Tree#?TREE.connections) of
+        false -> Tree; % `Connection' has been disconnected
+        true  -> remove_from_nohave(MsgId, Connection, Tree)
+    end.
+
+-spec handle_prune(connection(), tree()) -> tree().
 handle_prune(Connection, Tree) ->
     case maps:is_key(Connection, Tree#?TREE.connections) of
-        false -> {ok, Tree}; % `Connection' has been disconnected
-        true  -> {ok, become(lazy, Connection, Tree)}
+        false -> Tree; % `Connection' has been disconnected
+        true  -> become(lazy, Connection, Tree)
     end.
 
--spec handle_graft(msg_id(), connection(), tree()) -> {ok, tree()}.
+-spec handle_graft(message_id(), connection(), tree()) -> tree().
 handle_graft(MsgId, Connection, Tree0) ->
     case maps:find(Connection, Tree0#?TREE.connections) of
-        error      -> {ok, Tree0}; % `Connection' has been disconnected
+        error      -> Tree0; % `Connection' has been disconnected
         {ok, Peer} ->
             Tree1 = become(eager, Connection, Tree0),
-            case maps:find(MsgId, Tree1#?TREE.received) of
-                error         -> {ok, Tree1}; % maybe timed out
-                {ok, Message} ->
-                    _ = Peer#peer.pid ! message_gossip(Connection, MsgId, Message),
-                    {ok, Tree1}
-            end
+            _ = case maps:find(MsgId, Tree1#?TREE.ihave) of
+                    error         -> Tree1; % The message retention period has expired
+                    {ok, Message} -> Peer#peer.pid ! message_gossip(Connection, MsgId, Message)
+                end,
+            Tree1
     end.
 
--spec is_delivered(msg_id(), #{connection() => #peer{}}) -> boolean().
-is_delivered(MsgId, Connections) ->
-    not ppg_maps:any(fun (_, #peer{nohave = Nohave}) -> gb_sets:is_member(MsgId, Nohave) end, Connections).
+-spec handle_schedule(ppg_util:milliseconds(), tree()) -> tree().
+handle_schedule(Now, Tree0) ->
+    Schedule = Tree0#?TREE.schedule,
+    case pairing_heaps:out(Schedule#schedule.queue) of
+        empty                          -> Tree0;
+        {{Time, _}, _} when Time > Now ->
+            %% まだ指定時間に到達していない
+            After = Time - Now + 4, % NOTE: `+4`によって、`handle_schedule/2`の実行回数は最大でも200回/秒に抑えられる
+            Timer = erlang:send_after(After, self(), {?MODULE, schedule}),
+            Tree0#?TREE{schedule = Schedule#schedule{timer = Timer}};
+        {{_, {wehave_expire, MsgId}}, Queue} ->
+            Wehave = gb_sets:delete(MsgId, Tree0#?TREE.wehave),
+            handle_schedule(Now, Tree0#?TREE{schedule = Schedule#schedule{queue = Queue}, wehave = Wehave});
+        {{_, {ihave_timeout, MsgId, Connection}}, Queue} ->
+            Tree1 =
+                case maps:is_key(MsgId,Tree0#?TREE.missing) andalso maps:find(Connection, Tree0#?TREE.connections) of
+                    {ok, Peer} ->
+                        _ = Peer#peer.pid ! message_graft(Connection, MsgId),
+                        become(eager, Connection, Tree0);
+                    _ ->
+                        Tree0
+                end,
+            handle_schedule(Now, Tree1#?TREE{schedule = Schedule#schedule{queue = Queue}})
+    end.
 
--spec schedule(timeout(), term(), #schedule{}) -> #schedule{}.
-schedule(After, Task, Schedule) ->
-    Time = now_ms() + After,
-    Queue = pairing_heaps:in({Time, Task}, Schedule#schedule.queue),
+-spec schedule(timeout(), event(), #schedule{}) -> #schedule{}.
+schedule(infinity, _,  Schedule) -> Schedule;
+schedule(After, Event, Schedule) ->
+    ExecutionTime = ppg_util:now_ms() + After,
+    Queue = pairing_heaps:in({ExecutionTime, Event}, Schedule#schedule.queue),
     case pairing_heaps:peek(Schedule#schedule.queue) of
-        {{Next, _}, _} when Next =< Time ->
+        {{Next, _}, _} when Next =< ExecutionTime ->
             Schedule#schedule{queue = Queue};
         _ ->
-            _ = erlang:cancel_timer(Schedule#schedule.timer),
-            _ = receive {?MODULE, schedule} -> ok after 0 -> ok end,
-            Timer = erlang:send_after(After + 1, self(), {?MODULE, schedule}),
+            Timer = ppg_util:cancel_and_send_after(Schedule#schedule.timer, After, self(), {?MODULE, schedule}),
             Schedule#schedule{queue = Queue, timer = Timer}
     end.
 
-%% TODO:
--spec message_type(msg_id(), tree()) -> new | missing | received | delivered.
-message_type(MsgId, Tree) ->
-    case gb_sets:is_member(MsgId, Tree#?TREE.delivered) of
-        true  -> delivered;
+-spec message_status(message_id(), tree()) -> nohave | ihave | wehave.
+message_status(MsgId, Tree) ->
+    case gb_sets:is_member(MsgId, Tree#?TREE.wehave) of
+        true  -> wehave;
         false ->
-            case maps:is_key(MsgId, Tree#?TREE.missing) of
-                true  -> missing;
-                false ->
-                    case maps:is_key(MsgId, Tree#?TREE.received) of
-                        true  -> received;
-                        false -> new
-                    end
+            case maps:is_key(MsgId, Tree#?TREE.ihave) of
+                true  -> ihave;
+                false -> nohave
             end
     end.
 
--spec become(lazy|eager, connection(), tree()) -> tree().
+-spec become(peer_type(), connection(), tree()) -> tree().
 become(Type, Connection, Tree) ->
     Peer = maps:get(Connection, Tree#?TREE.connections),
     case Peer#peer.type =:= Type of
@@ -233,8 +325,68 @@ become(Type, Connection, Tree) ->
             Tree#?TREE{connections = Connections}
     end.
 
-%% TODO:
--spec remove_from_nohave(msg_id(), connection(), tree()) -> tree().
+-spec push_and_deliver(message_id(), message(), connection()|undefined, tree()) -> tree().
+push_and_deliver(MsgId, Message, Sender, Tree) ->
+    ok = push(MsgId, Message, Sender, Tree),
+
+    %% Delivers the message
+    _ = case Message of
+            {'APP', Data} -> Tree#?TREE.member ! Data;
+            {'SYS', Data} -> self() ! Data
+        end,
+    move_to_ihave(MsgId, Message, Sender, Tree).
+
+-spec push(message_id(), message(), connection()|undefined, tree()) -> ok.
+push(MsgId, Message, Sender, Tree) ->
+    ppg_maps:foreach(
+      fun (C, #peer{pid = Pid, type = Type}) ->
+              Pid ! case Type =:= eager andalso C =/= Sender of
+                        true  -> message_gossip(C, MsgId, Message);
+                        false -> message_ihave(C, MsgId)
+                    end
+      end,
+      Tree#?TREE.connections).
+
+-spec move_to_ihave(message_id(), message(), connection()|undefined, tree()) -> tree().
+move_to_ihave(MsgId, Message, Sender, Tree) ->
+    {Missing, Owners} =
+        case maps:find(MsgId, Tree#?TREE.missing) of
+            error      -> {Tree#?TREE.missing, [Sender]};
+            {ok, List} -> {maps:remove(MsgId, Tree#?TREE.missing), [Sender | List]}
+        end,
+    Connections =
+        maps:map(
+          fun (C, P) ->
+                  case lists:member(C, Owners) of
+                      true  -> P;
+                      false ->
+                          _ = gb_sets:size(P#peer.nohave) >= Tree#?TREE.max_nohave_count andalso
+                              begin
+                                  %% メッセージ解放を阻害し続けるピアをkillする (TODO: disconnectの方が良いかもしれない)
+                                  %% => このピアが動いているVM自体が何らかの理由でスローダウンしている可能性が高い
+                                  exit(P#peer.pid, kill)
+                              end,
+                          P#peer{nohave = gb_sets:add(MsgId, P#peer.nohave)}
+                  end
+          end,
+          Tree#?TREE.connections),
+    Ihave = maps:put(MsgId, Message, Tree#?TREE.ihave),
+    move_to_wehave_if_satisfied(MsgId, Tree#?TREE{connections = Connections, missing = Missing, ihave = Ihave}).
+
+-spec move_to_wehave_if_satisfied(message_id(), tree()) -> tree().
+move_to_wehave_if_satisfied(MsgId, Tree) ->
+    DoesWehave =
+        not ppg_maps:any(fun (_, #peer{nohave = Nohave}) -> gb_sets:is_member(MsgId, Nohave) end, Tree#?TREE.connections),
+    case DoesWehave of
+        false -> Tree;
+        true  ->
+            Ihave = maps:remove(MsgId, Tree#?TREE.ihave),
+            Wehave = gb_sets:add(MsgId, Tree#?TREE.wehave),
+            Schedule = schedule(Tree#?TREE.wehave_retention_period, {wehave_expire, MsgId}, Tree#?TREE.schedule),
+            Tree#?TREE{ihave = Ihave, wehave = Wehave, schedule = Schedule}
+    end.
+
+-spec remove_from_nohave(message_id(), connection(), tree()) -> tree().
 remove_from_nohave(MsgId, Connection, Tree) ->
     Peer = maps:get(Connection, Tree#?TREE.connections),
     case gb_sets:is_member(MsgId, Peer#peer.nohave) of
@@ -242,133 +394,31 @@ remove_from_nohave(MsgId, Connection, Tree) ->
         true  ->
             Nohave = gb_sets:delete(MsgId, Peer#peer.nohave),
             Connections = maps:put(Connection, Peer#peer{nohave = Nohave}, Tree#?TREE.connections),
-            case is_delivered(MsgId, Connections) of
-                false -> Tree#?TREE{connections = Connections};
-                true  ->
-                    Delivered = gb_sets:add(MsgId, Tree#?TREE.delivered),
-                    Schedule = schedule(Tree#?TREE.done_timeout, {done, MsgId}, Tree#?TREE.schedule),
-                    Received = maps:remove(MsgId, Tree#?TREE.received),
-                    Tree#?TREE{connections = Connections, received = Received, delivered = Delivered, schedule = Schedule}
-            end
+            move_to_wehave_if_satisfied(MsgId, Tree#?TREE{connections = Connections})
     end.
 
--spec received(msg_id(), message(), [connection()], tree()) -> tree().
-received(MsgId, Message, MaybeConnection, Tree) ->
-    {Missing, IhaveList} =
-        case maps:find(MsgId, Tree#?TREE.missing) of
-            error      -> {Tree#?TREE.missing, MaybeConnection};
-            {ok, List} -> {maps:remove(MsgId, Tree#?TREE.missing), MaybeConnection ++ List}
-        end,
-    case maps:size(Tree#?TREE.connections) =:= length(IhaveList) of
-        true ->
-            Delivered = gb_sets:add(MsgId, Tree#?TREE.delivered),
-            Schedule = schedule(Tree#?TREE.done_timeout, {done, MsgId}, Tree#?TREE.schedule),
-            Tree#?TREE{missing = Missing, delivered = Delivered, schedule = Schedule};
-        false ->
-            Connections =
-                maps:map(
-                  fun (C, P) ->
-                          case lists:member(C, IhaveList) of
-                              true  -> P;
-                              false -> P#peer{nohave = gb_sets:add(MsgId, P#peer.nohave)}
-                          end
-                  end,
-                  Tree#?TREE.connections),
-            Received = maps:put(MsgId, Message, Tree#?TREE.received),
-            Tree#?TREE{connections = Connections, missing = Missing, received = Received}
-    end.
+-spec add_to_missing(message_id(), connection(), tree()) -> tree().
+add_to_missing(MsgId, Connection, Tree) ->
+    Owners = [Connection | maps:get(MsgId, Tree#?TREE.missing, [])],
+    Missing = maps:put(MsgId, Owners, Tree#?TREE.missing),
 
--spec missing(msg_id(), connection(), tree()) -> tree().
-missing(MsgId, Connection, Tree) ->
-    {Missing, Schedule} =
-        case maps:find(MsgId, Tree#?TREE.missing) of
-            error      -> {maps:put(MsgId, [Connection], Tree#?TREE.missing),
-                           schedule(Tree#?TREE.ihave_timeout, {ihave, MsgId}, Tree#?TREE.schedule)};
-            {ok, List} -> {maps:put(MsgId, List ++ [Connection], Tree#?TREE.missing), Tree#?TREE.schedule}
-        end,
+    After = Tree#?TREE.ihave_timeout * length(Owners),
+    Schedule = schedule(After, {ihave_timeout, MsgId, Connection}, Tree#?TREE.schedule),
     Tree#?TREE{missing = Missing, schedule = Schedule}.
 
--spec handle_schedule(milliseconds(), tree()) -> {ok, tree()}.
-handle_schedule(Now, Tree) ->
-    Schedule = Tree#?TREE.schedule,
-    case pairing_heaps:out(Schedule#schedule.queue) of
-        empty                          -> {ok, Tree};
-        {{Time, _}, _} when Time > Now ->
-            _ = erlang:cancel_timer(Schedule#schedule.timer), % 念のため
-            _ = receive {?MODULE, schedule} -> ok after 0 -> ok end,
-            Timer = erlang:send_after(Time - Now + 1, self(), {?MODULE, schedule}),
-            {ok, Tree#?TREE{schedule = Schedule#schedule{timer = Timer}}};
-        {{_, {done, Id}}, Queue} ->
-            {ok, Tree1} = handle_done(Id, Tree),
-            handle_schedule(Now, Tree1#?TREE{schedule = Schedule#schedule{queue = Queue}});
-        {{_, {ihave, Id}}, Queue} ->
-            {ok, Tree1} = handle_ihave_timeout(Id, Tree),
-            handle_schedule(Now, Tree1#?TREE{schedule = Schedule#schedule{queue = Queue}})
-    end.
-
--spec handle_done(msg_id(), tree()) -> {ok, tree()}.
-handle_done(MsgId, Tree) ->
-    Delivered = gb_sets:delete(MsgId, Tree#?TREE.delivered),
-    {ok, Tree#?TREE{delivered = Delivered}}.
-
--spec handle_ihave_timeout(msg_id(), tree()) -> {ok, tree()}.
-handle_ihave_timeout(MsgId, Tree0) ->
-    case maps:find(MsgId, Tree0#?TREE.missing) of
-        error                          -> {ok, Tree0};
-        {ok, [Connection | IhaveList]} ->
-            Peer = maps:get(Connection, Tree0#?TREE.connections),
-            _ = Peer#peer.pid ! message_graft(Connection, MsgId),
-            Tree1 = become(eager, Connection, Tree0),
-            case IhaveList of
-                [] ->
-                    Missing = maps:remove(MsgId, Tree1#?TREE.missing),
-                    {ok, Tree1#?TREE{missing = Missing}};
-                _  ->
-                    Schedule = schedule(Tree1#?TREE.ihave_timeout, {ihave, MsgId}, Tree1#?TREE.schedule),
-                    Missing = maps:put(MsgId, IhaveList, Tree1#?TREE.missing),
-                    {ok, Tree1#?TREE{missing = Missing, schedule = Schedule}}
-            end
-    end.
-
--spec push(msg_id(), term(), connection()|undefined, tree()) -> tree().
-push(MsgId, Message, Sender, Tree) ->
-    ok = ppg_maps:foreach(
-           fun (C, #peer{pid = Pid, type = Type}) ->
-                   Pid ! case Type =:= eager andalso C =/= Sender of
-                             true  -> message_gossip(C, MsgId, Message);
-                             false -> message_ihave(C, MsgId)
-                         end
-           end,
-           Tree#?TREE.connections),
-    Tree.
-
--spec deliver(term(), tree()) -> tree().
-deliver(Message, Tree) ->
-    %% TODO:
-    _ = case Message of
-            {'SYSTEM', get_graph, {Ref, From}} -> % TODO:
-                From ! {Ref, get_entry(Tree)};
-            {'INTERNAL', X} -> % TODO:
-                self() ! X;
-            _ ->
-                Tree#?TREE.member ! Message
-        end,
-    Tree.
-
--spec now_ms() -> milliseconds().
-now_ms() ->
-    {Mega, Sec, Micro} = os:timestamp(),
-    (Mega * 1000 * 1000 * 1000) + (Sec * 1000) + (Micro div 1000).
-
--spec message_gossip(connection(), msg_id(), message()) -> {?TAG_GOSSIP, connection(), {msg_id(), message()}}.
+-spec message_gossip(connection(), message_id(), message()) -> {?TAG_GOSSIP, connection(), {message_id(), message()}}.
 message_gossip(Connection, MsgId, Message) ->
     {?TAG_GOSSIP, Connection, {MsgId, Message}}.
 
--spec message_ihave(connection(), msg_id()) -> {?TAG_IHAVE, connection(), msg_id()}.
+-spec message_ihave(connection(), message_id()) -> {?TAG_IHAVE, connection(), message_id()}.
 message_ihave(Connection, MsgId) ->
     {?TAG_IHAVE, Connection, MsgId}.
 
--spec message_graft(connection(), msg_id()) -> {?TAG_GRAFT, connection(), msg_id()}.
+-spec message_wehave(connection(), message_id()) -> {?TAG_WEHAVE, connection(), message_id()}.
+message_wehave(Connection, MsgId) ->
+    {?TAG_WEHAVE, Connection, MsgId}.
+
+-spec message_graft(connection(), message_id()) -> {?TAG_GRAFT, connection(), message_id()}.
 message_graft(Connection, MsgId) ->
     {?TAG_GRAFT, Connection, MsgId}.
 

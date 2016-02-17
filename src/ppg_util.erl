@@ -14,6 +14,14 @@
 -export([function_exported/3]).
 -export([cancel_and_flush_timer/2]).
 -export([cancel_and_send_after/4]).
+-export([now_ms/0]).
+
+-export_type([milliseconds/0]).
+
+%%----------------------------------------------------------------------------------------------------------------------
+%% Types
+%%----------------------------------------------------------------------------------------------------------------------
+-type milliseconds() :: non_neg_integer().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -61,3 +69,8 @@ cancel_and_send_after(OldTimer, Time, Pid, Message) ->
             false -> erlang:cancel_timer(OldTimer)
         end,
     erlang:send_after(Time, Pid, Message).
+
+-spec now_ms() -> milliseconds().
+now_ms() ->
+    {Mega, Sec, Micro} = os:timestamp(),
+    (Mega * 1000 * 1000 * 1000) + (Sec * 1000) + (Micro div 1000).

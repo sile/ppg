@@ -22,6 +22,7 @@
 
 -export_type([name/0]).
 -export_type([member/0]).
+-export_type([message/0]).
 
 -export_type([communication_graph/0]).
 
@@ -30,6 +31,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -type name() :: term().
 -type member() :: pid().
+-type message() :: term().
 
 -type communication_graph() :: [{Node::pid(), Member::pid(), [Edge::{eager|lazy, pid()}]}].
 
@@ -91,7 +93,7 @@ join(Group) ->
 leave(Group) ->
     ppg_peer_sup:pop_member(Group, self()).
 
--spec broadcast(name(), term()) -> ok.
+-spec broadcast(name(), message()) -> ok.
 broadcast(Group, Message) ->
     Peer = ppg_peer_sup:get_peer(Group, self()),
     ppg_peer:broadcast(Peer, Message).
