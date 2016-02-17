@@ -1,6 +1,6 @@
 %% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
 %%
-%% @doc TODO
+%% @doc Auxiliary functions for maps
 %% @private
 -module(ppg_maps).
 

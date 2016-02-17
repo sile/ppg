@@ -1,6 +1,8 @@
 %% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
 %%
-%% @doc TODO
+%% @doc Peer Contact Service
+%%
+%% @private
 -module(ppg_contact_service).
 
 %%----------------------------------------------------------------------------------------------------------------------

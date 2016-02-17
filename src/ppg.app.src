@@ -1,13 +1,12 @@
 {application, ppg,
  [{description, "Plumtree based process group"},
   {vsn, "0.1.0"},
-  {registered, [ppg_sup, ppg_local_ns, ppg_group_sup]},
+  {registered, [ppg_sup, ppg_group_sup]},
   {mod, {ppg_app, []}},
   {applications,
    [
     kernel,
     stdlib,
-    local,
     heaps
    ]},
   {env,[]}

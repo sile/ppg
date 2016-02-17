@@ -39,57 +39,40 @@ group_test_() ->
         end}
       ]).
 
-%% join_test_() ->
-%%     Group = foo,
-%%     foreach(
-%%       [Group],
-%%       [
-%%        {"Joins in a group",
-%%         fun () ->
-%%                 ?assertEqual(ok, ppg:join(Group)),
-%%                 ?assertEqual([self()], ppg:get_members(Group))
-%%         end}
-%%       ]).
-
-%% member_test_() ->
-%%     Group = foo,
-%%     foreach(
-%%       [Group],
-%%       [
-%%        {"Initially, a group has no members",
-%%         fun () ->
-%%                 ?assertEqual([], ppg:get_members(Group)),
-%%                 ?assertEqual([], ppg:get_local_members(Group)),
-%%                 ?assertEqual([], ppg:get_graph(Group)),
-%%                 ?assertEqual({error, {no_process, Group}}, ppg:get_closest_pid(Group))
-%%         end}
-%%       ]).
+join_test_() ->
+    Group = foo,
+    foreach(
+      [Group],
+      [
+       {"Joins in a group",
+        fun () ->
+                Member = self(),
+                ?assertMatch({ok, _}, ppg:join(Group, Member)),
+                ?assertMatch({ok, [{Member, _}]}, ppg:get_members(Group))
+        end}
+      ]).
 
 broadcast_test_() ->
     Group = foo,
     foreach(
       [Group],
       [
-       {"Broadcasts to an empty group",
-        fun () ->
-                ?assertError(badarg, ppg:broadcast(Group, hello))
-        end},
        {"Broadcasts to a single member group",
         fun () ->
-                {ok, _} = ppg:join(Group),
-                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                {ok, Peer} = ppg:join(Group, self()),
+                ?assertEqual(ok, ppg:broadcast(Peer, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
 
-                ok = ppg:leave(Group),
-                ?assertError(badarg, ppg:broadcast(Group, hello))
+                ok = ppg:leave(Peer),
+                ?assertExit({noproc, _}, ppg:broadcast(Peer, hello))
         end},
        {"Broadcasts to a two member group",
         fun () ->
-                {ok, _} = ppg:join(Group),
-                {ok, _} = ppg:join(Group),
+                {ok, Peer} = ppg:join(Group, self()),
+                {ok, _}    = ppg:join(Group, self()),
                 timer:sleep(100), % TODO: delete
 
-                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                ?assertEqual(ok, ppg:broadcast(Peer, hello)),
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end,
                 receive hello -> ?assert(true) after 20 -> ?assert(false) end
         end}
@@ -103,18 +86,21 @@ leave_test_() ->
        {"Leaves a group",
         fun () ->
                 Num = 20, % TODO: => 100
-                lists:foreach(fun (_) -> {ok, _} = ppg:join(Group) end, lists:seq(1, Num)),
+                lists:foreach(fun (_) -> {ok, _} = ppg:join(Group, self()) end, lists:seq(1, Num)),
                 timer:sleep(100), % TODO: delete
 
-                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+                {ok, {_, Peer0}} = ppg:get_closest_member(Group),
+                ?assertEqual(ok, ppg:broadcast(Peer0, hello)),
                 timer:sleep(100), % TODO: delete
                 lists:foreach(fun (I) -> receive hello -> ?assert(true) after 50 -> ?assert(I) end end,
                               lists:seq(1, Num)),
                 receive hello -> ?assert(false) after 50 -> ?assert(true) end,
 
-                ?assertEqual(ok, ppg:leave(Group)),
+                ?assertEqual(ok, ppg:leave(Peer0)),
                 timer:sleep(100), % TODO: delete
-                ?assertEqual(ok, ppg:broadcast(Group, hello)),
+
+                {ok, {_, Peer1}} = ppg:get_closest_member(Group),
+                ?assertEqual(ok, ppg:broadcast(Peer1, hello)),
                 timer:sleep(100), % TODO: delete
                 lists:foreach(fun (I) -> receive hello -> ?assert(true) after 50 -> ?assert(I) end end,
                               lists:seq(1, Num - 1)),

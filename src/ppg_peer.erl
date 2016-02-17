@@ -9,9 +9,10 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([start_link/4]).
+-export([start_link/3]).
 -export([stop/1]).
 -export([broadcast/2]).
+-export([get_member/1]).
 -export([get_graph/2]).
 
 -export_type([graph/0]).
@@ -44,19 +45,23 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec start_link(local:otp_name(), ppg:name(), ppg:member(), ppg:join_options()) -> {ok, pid()} | {error, Reason::term()}.
-start_link(Name, Group, Member, Options) ->
-    gen_server:start_link(Name, ?MODULE, [Group, Member, Options], []).
+-spec start_link(ppg:name(), ppg:member(), ppg:join_options()) -> {ok, pid()} | {error, Reason::term()}.
+start_link(Group, Member, Options) ->
+    gen_server:start_link(?MODULE, [Group, Member, Options], []).
 
--spec stop(local:otp_ref()) -> ok.
+-spec stop(ppg:peer()) -> ok.
 stop(Peer) ->
     gen_server:stop(Peer).
 
--spec broadcast(local:otp_ref(), ppg:message()) -> ok.
+-spec broadcast(ppg:peer(), ppg:message()) -> ok.
 broadcast(Peer, Message) ->
     gen_server:call(Peer, {broadcast, Message}).
 
--spec get_graph(local:otp_ref(), timeout()) -> graph().
+-spec get_member(ppg:peer()) -> ppg:member().
+get_member(Peer) ->
+    gen_server:call(Peer, get_member).
+
+-spec get_graph(ppg:peer(), timeout()) -> graph().
 get_graph(Peer, Timeout) ->
     Tag = make_ref(),
     {_, Monitor} = spawn_monitor(?MODULE, build_graph, [{Tag, self()}, Peer, Timeout]),
@@ -84,6 +89,7 @@ init([Group, Member, Options]) ->
 
 %% @private
 handle_call({broadcast, Arg}, _From, State) -> handle_broadcast(Arg, State);
+handle_call(get_member,       _From, State) -> handle_get_member(State);
 handle_call(_Request,         _From, State) -> {noreply, State}.
 
 %% @private
@@ -155,6 +161,10 @@ handle_broadcast(Message, State) ->
     Tree = ppg_plumtree:broadcast(Message, State#?STATE.tree),
     {reply, ok, State#?STATE{tree = Tree}}.
 
+-spec handle_get_member(#?STATE{}) -> {reply, ppg:member(), #?STATE{}}.
+handle_get_member(State) ->
+    {reply, ppg_plumtree:get_member(State#?STATE.tree), State}.
+
 -spec handle_collect_peer_info(from(), #?STATE{}) -> {noreply, #?STATE{}}.
 handle_collect_peer_info(From, State) ->
     Tree = ppg_plumtree:system_broadcast({?MODULE, get_peer_info, From}, State#?STATE.tree),
@@ -166,7 +176,7 @@ reply({Tag, Pid}, Message) ->
     ok.
 
 %% @private
--spec build_graph(from(), local:otp_ref(), timeout()) -> ok.
+-spec build_graph(from(), ppg:peer(), timeout()) -> ok.
 build_graph(From, Peer, Timeout) when is_integer(Timeout) ->
     _ = erlang:send_after(Timeout, self(), timeout),
     build_graph(From, Peer, infinity);

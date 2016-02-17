@@ -12,6 +12,7 @@
 -export([start_link/0]).
 -export([start_child/1]).
 -export([stop_child/1]).
+-export([find_child/1]).
 -export([which_children/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -29,7 +30,7 @@ start_link() ->
 -spec start_child(ppg:name()) -> {ok, pid()} | {error, Reason} when
       Reason :: {already_started, pid()} | term().
 start_child(Group) ->
-    Child = #{id => Group, start => {ppg_peer_sup, start_link, [Group]}, type => supervisor},
+    Child = #{id => Group, start => {ppg_peer_sup, start_link, []}, type => supervisor},
     supervisor:start_child(?MODULE, Child).
 
 -spec stop_child(ppg:name()) -> ok.
@@ -37,6 +38,14 @@ stop_child(Group) ->
     _ = supervisor:terminate_child(?MODULE, Group),
     _ = supervisor:delete_child(?MODULE, Group),
     ok.
+
+-spec find_child(ppg:name()) -> {ok, pid()} | error.
+find_child(Group) ->
+    case lists:keyfind(Group, 1, which_children()) of
+        false           -> error;
+        {_, restarting} -> _ = timer:sleep(1), find_child(Group);
+        {_, Pid}        -> {ok, Pid}
+    end.
 
 -spec which_children() -> [{ppg:name(), pid()|restarting}].
 which_children() ->

@@ -30,7 +30,6 @@ start_link() ->
 init([]) ->
     Children =
         [
-         ppg_local_ns:child_spec(),
          #{id => group_sup, start => {ppg_group_sup, start_link, []}, type => supervisor}
         ],
     {ok, {#{strategy => rest_for_one}, Children}}.
