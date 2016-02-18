@@ -9,7 +9,9 @@
 -export([get_graph/1, get_graph/2]).
 -export([broadcast/2]).
 
-%% TODO: random test function
+-export([join_n/2]).
+-export([leave_n/2]).
+-export([reachability_test/5]).
 
 -export_type([get_graph_options/0, get_graph_option/0]).
 -export_type([graphviz_command/0]).
@@ -53,6 +55,47 @@ get_graph(Group, Options) ->
 broadcast(Group, Message) ->
     {ok, {_, Peer}} = ppg:get_closest_member(Group),
     ppg:broadcast(Peer, Message).
+
+-spec join_n(ppg:name(), non_neg_integer()) -> ok.
+join_n(Group, N) ->
+    lists:foreach(fun (_) -> {ok, _} = ppg:join(Group, self()) end, lists:seq(1, N)).
+
+-spec leave_n(ppg:name(), non_neg_integer()) -> ok.
+leave_n(Group, N) ->
+    {ok, Members} = ppg:get_members(Group),
+    lists:foreach(fun ({_, Peer}) -> ok = ppg:leave(Peer) end, lists:sublist(shuffle(Members), N)).
+
+-spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), ppg:join_options()) -> MissingMessageCount::non_neg_integer().
+reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Options) ->
+    Group = make_ref(),
+    Message = make_ref(),
+    ok = ppg:create(Group),
+    try
+        {ok, _} = ppg:join(Group, self(), Options),
+        Monitors =
+            [element(
+               2,
+               spawn_monitor(
+                 fun () ->
+                         _ = timer:sleep(rand:uniform(BeforeJoin)),
+                         {ok, Peer} = ppg:join(Group, self(), Options),
+                         _ = timer:sleep(rand:uniform(BeforeBroadcast)),
+                         ok = ppg:broadcast(Peer, Message),
+                         _ = timer:sleep(rand:uniform(AfterBroadcast))
+                 end)) || _ <- lists:seq(1, MessageCount)],
+        Loop =
+            fun Loop (Count, [])   -> Count;
+                Loop (Count, Rest) ->
+                    receive
+                        Message                -> Loop(Count + 1, Rest);
+                        {'DOWN', Ref, _, _, _} -> Loop(Count, Rest -- [Ref])
+                    end
+            end,
+        MissingCount = MessageCount - Loop(0, Monitors),
+        MissingCount
+    after
+        ok = ppg:delete(Group)
+    end.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
@@ -109,3 +152,7 @@ generate_dot_edges([{From, _, Edges} | Graph]) ->
           io_lib:format("  \"~p\" -- \"~p\" [color=~s,penwidth=~p];\n", [From, To, Color, Weight+1])
       end || #{pid := To, type := Type, nohaves := Weight} <- Edges, From < To],
      generate_dot_edges(Graph)].
+
+-spec shuffle(list()) -> list().
+shuffle(List) ->
+    [X || {_, X} <- lists:sort([{rand:uniform(), X} || X <- List])].
