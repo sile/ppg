@@ -46,7 +46,8 @@ get_graph(Group, Options) ->
     Graph1 =
         case IncludeEdge of
             both -> Graph0;
-            _    -> [{P, M, lists:filter(fun (#{type := Type}) -> Type =:= IncludeEdge end, Edges)} || {P, M, Edges} <- Graph0]
+            _    -> [{P, M, lists:filter(fun (#{type := Type}) -> Type =:= IncludeEdge end, Edges)} ||
+                        {P, M, Edges} <- Graph0]
         end,
     Graph2 = lists:sort(Graph1),
     format_graph(Graph2, Group, Format).
@@ -65,9 +66,13 @@ leave_n(Group, N) ->
     {ok, Members} = ppg:get_members(Group),
     lists:foreach(fun ({_, Peer}) -> ok = ppg:leave(Peer) end, lists:sublist(shuffle(Members), N)).
 
--spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), ppg:join_options()) -> MissingMessageCount::non_neg_integer().
+-spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), Options) ->
+                               MissingMessageCount when
+      Options :: [{group, ppg:name()} |
+                  ppg:join_option()],
+      MissingMessageCount :: non_neg_integer().
 reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Options) ->
-    Group = make_ref(),
+    Group = proplists:get_value(group, Options, make_ref()),
     Message = make_ref(),
     ok = ppg:create(Group),
     try

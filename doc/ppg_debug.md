@@ -108,7 +108,8 @@ leave_n(Group::<a href="ppg.md#type-name">ppg:name()</a>, N::non_neg_integer()) 
 ### reachability_test/5 ###
 
 <pre><code>
-reachability_test(MessageCount::pos_integer(), BeforeJoin::timeout(), BeforeBroadcast::timeout(), AfterBroadcast::timeout(), Options::<a href="ppg.md#type-join_options">ppg:join_options()</a>) -&gt; MissingMessageCount::non_neg_integer()
+reachability_test(MessageCount::pos_integer(), BeforeJoin::timeout(), BeforeBroadcast::timeout(), AfterBroadcast::timeout(), Options) -&gt; MissingMessageCount
 </code></pre>
-<br />
+
+<ul class="definitions"><li><code>Options = [{group, <a href="ppg.md#type-name">ppg:name()</a>} | <a href="ppg.md#type-join_option">ppg:join_option()</a>]</code></li><li><code>MissingMessageCount = non_neg_integer()</code></li></ul>
 
