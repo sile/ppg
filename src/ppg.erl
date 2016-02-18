@@ -92,13 +92,19 @@ get_members(Group) ->
     end.
 
 %% TODO: ローカルにメンバーがいる or 静止状態ではない場合には結果の正しさを保証しない旨を記述
--spec get_closest_member(name()) -> {ok, {member(), peer()}} | {error, {no_such_group, name()}}.
+-spec get_closest_member(name()) -> {ok, {member(), peer()}} | {error, Reason} when
+      Reason :: {no_such_group, name()}
+              | {no_reachable_member, name()}.
 get_closest_member(Group) ->
     case ppg_group_sup:find_child(Group) of
         error     -> {error, {no_such_group, Group}};
         {ok, Sup} ->
             case ppg_peer_sup:which_children(Sup) of
-                []    -> todo;
+                [] ->
+                    case ppg_contact_service:find_peer(ppg_contact_service:new(Group)) of
+                        error      -> {error, {no_reachable_member, Group}};
+                        {ok, Peer} -> {ok, Peer}
+                    end;
                 Peers ->
                     Peer = lists:nth(rand:uniform(length(Peers)), Peers),
                     {ok, {ppg_peer:get_member(Peer), Peer}}

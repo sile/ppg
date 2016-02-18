@@ -10,6 +10,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -export([new/1]).
 -export([get_peer/1]).
+-export([find_peer/1]).
 
 -export_type([service/0]).
 
@@ -32,13 +33,18 @@
 new(Group) ->
     #?STATE{group = Group}.
 
+-spec find_peer(service()) -> {ok, ppg:peer()} | error.
+find_peer(#?STATE{group = Group}) ->
+    case global:whereis_name({?MODULE, Group}) of
+        undefined -> error;
+        Peer      -> {ok, Peer}
+    end.
+
 -spec get_peer(service()) -> ppg:peer().
 get_peer(Service = #?STATE{group = Group}) ->
-    GlobalName = {?MODULE, Group},
-    case global:whereis_name(GlobalName) of
-        undefined ->
-            _ = global:register_name(GlobalName, self()),
-            get_peer(Service);
-        Peer ->
-            Peer
+    case find_peer(Service) of
+        {ok, Peer} -> Peer;
+        error      ->
+            _ = global:register_name({?MODULE, Group}, self()),
+            get_peer(Service)
     end.

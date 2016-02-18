@@ -147,9 +147,10 @@ delete(Group::<a href="#type-name">name()</a>) -&gt; ok
 ### get_closest_member/1 ###
 
 <pre><code>
-get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}} | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}} | {error, Reason}
 </code></pre>
-<br />
+
+<ul class="definitions"><li><code>Reason = {no_such_group, <a href="#type-name">name()</a>} | {no_reachable_member, <a href="#type-name">name()</a>}</code></li></ul>
 
 <a name="get_local_members-1"></a>
 
