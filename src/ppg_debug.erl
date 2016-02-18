@@ -22,7 +22,7 @@
 -type get_graph_options() :: [get_graph_option()].
 
 -type get_graph_option() :: {timeout, timeout()}
-                          | {format, native | dot | {png, graphviz_command(), filename:name_all()}}
+                          | {format, native | dot | {png, graphviz_command(), file:name_all()}}
                           | {edge, eager|lazy|both}.
 
 -type graphviz_command() :: dot | neato | twopi | circo | fdp.
@@ -102,7 +102,7 @@ reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Opt
 %%----------------------------------------------------------------------------------------------------------------------
 -spec format_graph(ppg_peer:graph(), ppg:name(), native) -> ppg_peer:graph();
                   (ppg_peer:graph(), ppg:name(), dot)    -> binary();
-                  (ppg_peer:graph(), ppg:name(), {png, graphviz_command(), filname:name_all()}) -> ok.
+                  (ppg_peer:graph(), ppg:name(), {png, graphviz_command(), file:name_all()}) -> ok.
 format_graph(Graph, _Group, native) ->
     Graph;
 format_graph(Graph, Group, {png, Command, OutputPath}) ->
@@ -121,7 +121,7 @@ format_graph(Graph, Group, dot) ->
             error             -> ContactPeer = self(); % NOTE: dummy value
             {ok, ContactPeer} -> ok
         end,
-    GraphName = http_uri:encode(lists:flatten(io_lib:format("~w", [Group]))),
+    GraphName = lists:flatten(io_lib:format("\"~w\"", [Group])),
     list_to_binary(
       [
        "graph ", GraphName, " {\n",
@@ -130,7 +130,7 @@ format_graph(Graph, Group, dot) ->
        "}\n"
       ]).
 
--spec generate_dot_nodes(ppg_peer:graph(), ppg_peer:peer()) -> iodata().
+-spec generate_dot_nodes(ppg_peer:graph(), ppg:peer()) -> iodata().
 generate_dot_nodes([], _) ->
     [];
 generate_dot_nodes([{Peer, Member, _} | Graph], ContactPeer) ->
