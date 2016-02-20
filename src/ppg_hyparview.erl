@@ -81,9 +81,9 @@
 default_options() ->
     [
      {active_view_size, 4},
-     {passive_view_size, 24},
-     {active_random_walk_length, 6},
-     {passive_random_walk_length, 3},
+     {passive_view_size, 20},
+     {active_random_walk_length, 5},
+     {passive_random_walk_length, 2},
      {shuffle_count, 4},
      {shuffle_interval, 10 * 60 * 1000},
      {max_broadcast_delay, 10 * 1000},
