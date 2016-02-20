@@ -183,7 +183,10 @@ handle_forward_join({NewPeer, _, _}, View = #?VIEW{active_view = Active}) when A
 handle_forward_join({NewPeer, TimeToLive, Sender}, View) ->
     Next = ppg_maps:random_key(maps:remove(Sender, View#?VIEW.active_view), Sender),
     _ = Next ! message_forward_join(NewPeer, TimeToLive - 1),
-    case TimeToLive =:= View#?VIEW.passive_random_walk_length of
+    DoesAddToPassiveView =
+        maps:size(View#?VIEW.passive_view) < View#?VIEW.passive_view_size orelse
+        TimeToLive =:= View#?VIEW.passive_random_walk_length,
+    case DoesAddToPassiveView of
         false -> View;
         true  -> add_peers_to_passive_view([NewPeer], View)
     end.
