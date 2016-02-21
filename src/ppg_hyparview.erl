@@ -131,7 +131,7 @@ handle_info({'FOREIGNER',    Arg},    Tree, View) -> {ok, handle_foreigner(Arg, 
 handle_info({'SHUFFLE',      Arg},    Tree, View) -> {ok, {Tree, handle_shuffle(Arg, View)}};
 handle_info({'SHUFFLEREPLY', Arg},    Tree, View) -> {ok, {Tree, handle_shufflereply(Arg, View)}};
 handle_info({'CONNECTIVITY', Arg},    Tree, View) -> {ok, handle_connectivity(Arg, Tree, View)};
-handle_info({?MODULE, start_shuffle}, Tree, View) -> {ok, {Tree, handle_start_shuffle(View)}};
+handle_info({?MODULE, start_shuffle}, Tree, View) -> {ok, handle_start_shuffle(Tree, View)};
 handle_info({?MODULE, rejoin},        Tree, View) -> {ok, join(Tree, View)};
 handle_info({'DOWN', Ref, _, Pid, _}, Tree, View) ->
     case View of
@@ -245,18 +245,23 @@ schedule_shuffle(View = #?VIEW{shuffle_interval = Interval}) ->
     Timer = ppg_util:cancel_and_send_after(View#?VIEW.shuffle_timer, After, self(), {?MODULE, start_shuffle}),
     View#?VIEW{shuffle_timer = Timer}.
 
--spec handle_start_shuffle(view()) -> view().
-handle_start_shuffle(View = #?VIEW{active_view = Active}) when Active =:= #{} ->
-    schedule_shuffle(View);
-handle_start_shuffle(View = #?VIEW{shuffle_count = Count}) ->
+-spec handle_start_shuffle(tree(), view()) -> {tree(), view()}.
+handle_start_shuffle(Tree0, View0 = #?VIEW{shuffle_count = Count}) ->
+    {Tree1, View1} =
+        case is_small_active_view(View0) of
+            false -> {Tree0, View0};
+            true  -> promote_passive_peer_if_needed(Tree0, View0)
+        end,
     ActiveCount = (Count + 1) div 2,
     Peers =
         [self()] ++
-        ppg_maps:random_keys(ActiveCount - 1, View#?VIEW.active_view) ++
-        ppg_maps:random_keys(Count - ActiveCount, View#?VIEW.passive_view),
-    {ok, Next} = ppg_maps:random_key(View#?VIEW.active_view),
-    _ = Next ! message_shuffle(Peers, View#?VIEW.active_random_walk_length),
-    schedule_shuffle(View).
+        ppg_maps:random_keys(ActiveCount - 1, View1#?VIEW.active_view) ++
+        ppg_maps:random_keys(Count - ActiveCount, View1#?VIEW.passive_view),
+    _ = case ppg_maps:random_key(View1#?VIEW.active_view) of
+            error      -> ok;
+            {ok, Next} -> Next ! message_shuffle(Peers, View1#?VIEW.active_random_walk_length)
+        end,
+    {Tree1, schedule_shuffle(View1)}.
 
 -spec handle_connectivity(up|kick|down, tree(), view()) -> {tree(), view()}.
 handle_connectivity(up, Tree, View) ->
@@ -384,6 +389,10 @@ promote_passive_peer_if_needed(Tree, View) ->
             end
     end.
 
+-spec is_small_active_view(view()) -> boolean().
+is_small_active_view(#?VIEW{active_view = ActiveView, active_view_size = Size}) ->
+    maps:size(ActiveView) < max(1, Size div 2).
+
 -spec message_join() -> {'JOIN', NewPeer::ppg_peer:peer()}.
 message_join() ->
     {'JOIN', self()}.
@@ -404,8 +413,8 @@ message_disconnect(Conn) ->
     {'DISCONNECT', {Conn, self()}}.
 
 -spec message_neighbor(view()) -> {'NEIGHBOR', {high|low, ppg_peer:peer()}}.
-message_neighbor(#?VIEW{active_view = ActiveView}) ->
-    Priority = case maps:size(ActiveView) of 0 -> high; _ -> low end,
+message_neighbor(View) ->
+    Priority = case is_small_active_view(View) of true -> high; _ -> low end,
     {'NEIGHBOR', {Priority, self()}}.
 
 -spec message_foreigner() -> {'FOREIGNER', ppg_peer:peer()}.
