@@ -125,14 +125,7 @@ new(Member, Peers, Options0) ->
 
 -spec neighbor_up(ppg:peer(), connection(), tree()) -> tree().
 neighbor_up(PeerPid, Connection, Tree) ->
-    Nohave =
-        maps:fold(fun (MsgId, _, Acc) ->
-                          _ = PeerPid ! message_ihave(Connection, MsgId),
-                          gb_sets:add(MsgId, Acc)
-                  end,
-                  gb_sets:empty(),
-                  Tree#?TREE.ihave),
-    Connections = maps:put(Connection, #peer{pid = PeerPid, nohave = Nohave}, Tree#?TREE.connections),
+    Connections = maps:put(Connection, #peer{pid = PeerPid}, Tree#?TREE.connections),
     Tree#?TREE{connections = Connections}.
 
 -spec neighbor_down(ppg:peer(), connection(), tree()) -> tree().
