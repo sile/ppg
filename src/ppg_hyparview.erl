@@ -23,16 +23,6 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
 %%----------------------------------------------------------------------------------------------------------------------
--define(TAG_JOIN,         'JOIN').
--define(TAG_FORWARD_JOIN, 'FORWARD_JOIN').
--define(TAG_CONNECT,      'CONNECT').
--define(TAG_DISCONNECT,   'DISCONNECT').
--define(TAG_NEIGHBOR,     'NEIGHBOR').
--define(TAG_FOREIGNER,    'FOREIGNER').
--define(TAG_SHUFFLE,      'SHUFFLE').
--define(TAG_SHUFFLEREPLY, 'SHUFFLEREPLY').
--define(TAG_CONNECTIVITY, 'CONNECTIVITY').
-
 -define(VIEW, ?MODULE).
 -record(?VIEW,
         {
@@ -133,7 +123,7 @@ join(View) ->
             _ = ContactPeer ! message_join(),
             %% Joined peer must be connected with at least one other peer (or timed out in the caller side)
             receive
-                {?TAG_CONNECT, Arg} -> handle_connect(Arg, View)
+                {'CONNECT', Arg} -> handle_connect(Arg, View)
             end
     end.
 
@@ -142,15 +132,15 @@ flush_queue(View) ->
     {lists:reverse(View#?VIEW.queue), View#?VIEW{queue = []}}.
 
 -spec handle_info(term(), view()) -> {ok, view()} | ignore.
-handle_info({?TAG_JOIN,         Arg}, View) -> {ok, handle_join(Arg, View)};
-handle_info({?TAG_FORWARD_JOIN, Arg}, View) -> {ok, handle_forward_join(Arg, View)};
-handle_info({?TAG_CONNECT,      Arg}, View) -> {ok, handle_connect(Arg, View)};
-handle_info({?TAG_DISCONNECT,   Arg}, View) -> {ok, handle_disconnect(Arg, false, View)};
-handle_info({?TAG_NEIGHBOR,     Arg}, View) -> {ok, handle_neighbor(Arg, View)};
-handle_info({?TAG_FOREIGNER,    Arg}, View) -> {ok, handle_foreigner(Arg, View)};
-handle_info({?TAG_SHUFFLE,      Arg}, View) -> {ok, handle_shuffle(Arg, View)};
-handle_info({?TAG_SHUFFLEREPLY, Arg}, View) -> {ok, handle_shufflereply(Arg, View)};
-handle_info({?TAG_CONNECTIVITY, Arg}, View) -> {ok, handle_connectivity(Arg, View)};
+handle_info({'JOIN',         Arg}, View) -> {ok, handle_join(Arg, View)};
+handle_info({'FORWARD_JOIN', Arg}, View) -> {ok, handle_forward_join(Arg, View)};
+handle_info({'CONNECT',      Arg}, View) -> {ok, handle_connect(Arg, View)};
+handle_info({'DISCONNECT',   Arg}, View) -> {ok, handle_disconnect(Arg, false, View)};
+handle_info({'NEIGHBOR',     Arg}, View) -> {ok, handle_neighbor(Arg, View)};
+handle_info({'FOREIGNER',    Arg}, View) -> {ok, handle_foreigner(Arg, View)};
+handle_info({'SHUFFLE',      Arg}, View) -> {ok, handle_shuffle(Arg, View)};
+handle_info({'SHUFFLEREPLY', Arg}, View) -> {ok, handle_shufflereply(Arg, View)};
+handle_info({'CONNECTIVITY', Arg}, View) -> {ok, handle_connectivity(Arg, View)};
 handle_info({?MODULE, start_shuffle}, View) -> {ok, handle_start_shuffle(View)};
 handle_info({?MODULE, rejoin},        View) -> {ok, join(View)};
 handle_info({'DOWN', Ref, _, Pid, _}, View) ->
@@ -404,43 +394,43 @@ promote_passive_peer_if_needed(View) ->
             end
     end.
 
--spec message_join() -> {?TAG_JOIN, NewPeer::ppg:peer()}.
+-spec message_join() -> {'JOIN', NewPeer::ppg:peer()}.
 message_join() ->
-    {?TAG_JOIN, self()}.
+    {'JOIN', self()}.
 
--spec message_forward_join(NewPeer, TimeToLive) -> {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, Sender}} when
+-spec message_forward_join(NewPeer, TimeToLive) -> {'FORWARD_JOIN', {NewPeer, TimeToLive, Sender}} when
       NewPeer    :: ppg:peer(),
       TimeToLive :: pos_integer(),
       Sender     :: ppg:peer().
 message_forward_join(NewPeer, TimeToLive) ->
-    {?TAG_FORWARD_JOIN, {NewPeer, TimeToLive, self()}}.
+    {'FORWARD_JOIN', {NewPeer, TimeToLive, self()}}.
 
--spec message_connect(connection()) -> {?TAG_CONNECT, {connection(), ppg:peer()}}.
+-spec message_connect(connection()) -> {'CONNECT', {connection(), ppg:peer()}}.
 message_connect(Conn) ->
-    {?TAG_CONNECT, {Conn, self()}}.
+    {'CONNECT', {Conn, self()}}.
 
--spec message_disconnect(connection()) -> {?TAG_DISCONNECT, {connection(), ppg:peer()}}.
+-spec message_disconnect(connection()) -> {'DISCONNECT', {connection(), ppg:peer()}}.
 message_disconnect(Conn) ->
-    {?TAG_DISCONNECT, {Conn, self()}}.
+    {'DISCONNECT', {Conn, self()}}.
 
--spec message_neighbor(view()) -> {?TAG_NEIGHBOR, {high|low, ppg:peer()}}.
+-spec message_neighbor(view()) -> {'NEIGHBOR', {high|low, ppg:peer()}}.
 message_neighbor(#?VIEW{active_view = ActiveView}) ->
     Priority = case maps:size(ActiveView) of 0 -> high; _ -> low end,
-    {?TAG_NEIGHBOR, {Priority, self()}}.
+    {'NEIGHBOR', {Priority, self()}}.
 
--spec message_foreigner() -> {?TAG_FOREIGNER, ppg:peer()}.
+-spec message_foreigner() -> {'FOREIGNER', ppg:peer()}.
 message_foreigner() ->
-    {?TAG_FOREIGNER, self()}.
+    {'FOREIGNER', self()}.
 
--spec message_shuffle(Peers, pos_integer()) -> {?TAG_SHUFFLE, {Peers, pos_integer(), ppg:peer()}} when
+-spec message_shuffle(Peers, pos_integer()) -> {'SHUFFLE', {Peers, pos_integer(), ppg:peer()}} when
       Peers :: [ppg:peer()].
 message_shuffle(Peers, TimeToLive) ->
-    {?TAG_SHUFFLE, {Peers, TimeToLive, self()}}.
+    {'SHUFFLE', {Peers, TimeToLive, self()}}.
 
--spec message_shufflereply([ppg:peer()]) -> {?TAG_SHUFFLEREPLY, [ppg:peer()]}.
+-spec message_shufflereply([ppg:peer()]) -> {'SHUFFLEREPLY', [ppg:peer()]}.
 message_shufflereply(Peers) ->
-    {?TAG_SHUFFLEREPLY, Peers}.
+    {'SHUFFLEREPLY', Peers}.
 
--spec message_connectivity(up|kick|down) -> {?TAG_CONNECTIVITY, up|kick|down}.
+-spec message_connectivity(up|kick|down) -> {'CONNECTIVITY', up|kick|down}.
 message_connectivity(Direction) ->
-    {?TAG_CONNECTIVITY, Direction}.
+    {'CONNECTIVITY', Direction}.

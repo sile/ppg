@@ -28,12 +28,6 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
 %%----------------------------------------------------------------------------------------------------------------------
--define(TAG_GOSSIP, 'GOSSIP').
--define(TAG_IHAVE,  'IHAVE').
--define(TAG_WEHAVE, 'WEHAVE').
--define(TAG_PRUNE,  'PRUNE').
--define(TAG_GRAFT,  'GRAFT').
-
 -record(peer,
         {
           pid                      :: ppg:peer(),
@@ -175,11 +169,11 @@ get_peers(#?TREE{connections = Connections}) ->
       Connections).
 
 -spec handle_info(term(), tree()) -> {ok, tree()} | ignore.
-handle_info({?TAG_GOSSIP, Connection, Arg}, Tree) -> {ok, handle_gossip(Arg, Connection, Tree)};
-handle_info({?TAG_IHAVE,  Connection, Arg}, Tree) -> {ok, handle_ihave(Arg, Connection, Tree)};
-handle_info({?TAG_WEHAVE, Connection, Arg}, Tree) -> {ok, handle_wehave(Arg, Connection, Tree)};
-handle_info({?TAG_PRUNE,  Connection},      Tree) -> {ok, handle_prune(Connection, Tree)};
-handle_info({?TAG_GRAFT,  Connection, Arg}, Tree) -> {ok, handle_graft(Arg, Connection, Tree)};
+handle_info({'GOSSIP', Connection, Arg}, Tree) -> {ok, handle_gossip(Arg, Connection, Tree)};
+handle_info({'IHAVE',  Connection, Arg}, Tree) -> {ok, handle_ihave(Arg, Connection, Tree)};
+handle_info({'WEHAVE', Connection, Arg}, Tree) -> {ok, handle_wehave(Arg, Connection, Tree)};
+handle_info({'PRUNE',  Connection},      Tree) -> {ok, handle_prune(Connection, Tree)};
+handle_info({'GRAFT',  Connection, Arg}, Tree) -> {ok, handle_graft(Arg, Connection, Tree)};
 handle_info({?MODULE, schedule},            Tree) -> {ok, handle_schedule(ppg_util:now_ms(), Tree)};
 handle_info(_Info, _Tree)                         -> ignore.
 
@@ -391,22 +385,22 @@ add_to_missing(MsgId, Connection, Tree) ->
     Schedule = schedule(After, {ihave_timeout, MsgId, Connection}, Tree#?TREE.schedule),
     Tree#?TREE{missing = Missing, schedule = Schedule}.
 
--spec message_gossip(connection(), message_id(), message()) -> {?TAG_GOSSIP, connection(), {message_id(), message()}}.
+-spec message_gossip(connection(), message_id(), message()) -> {'GOSSIP', connection(), {message_id(), message()}}.
 message_gossip(Connection, MsgId, Message) ->
-    {?TAG_GOSSIP, Connection, {MsgId, Message}}.
+    {'GOSSIP', Connection, {MsgId, Message}}.
 
--spec message_ihave(connection(), message_id()) -> {?TAG_IHAVE, connection(), message_id()}.
+-spec message_ihave(connection(), message_id()) -> {'IHAVE', connection(), message_id()}.
 message_ihave(Connection, MsgId) ->
-    {?TAG_IHAVE, Connection, MsgId}.
+    {'IHAVE', Connection, MsgId}.
 
--spec message_wehave(connection(), message_id()) -> {?TAG_WEHAVE, connection(), message_id()}.
+-spec message_wehave(connection(), message_id()) -> {'WEHAVE', connection(), message_id()}.
 message_wehave(Connection, MsgId) ->
-    {?TAG_WEHAVE, Connection, MsgId}.
+    {'WEHAVE', Connection, MsgId}.
 
--spec message_graft(connection(), message_id()) -> {?TAG_GRAFT, connection(), message_id()}.
+-spec message_graft(connection(), message_id()) -> {'GRAFT', connection(), message_id()}.
 message_graft(Connection, MsgId) ->
-    {?TAG_GRAFT, Connection, MsgId}.
+    {'GRAFT', Connection, MsgId}.
 
--spec message_prune(connection()) -> {?TAG_PRUNE, connection()}.
+-spec message_prune(connection()) -> {'PRUNE', connection()}.
 message_prune(Connection) ->
-    {?TAG_PRUNE, Connection}.
+    {'PRUNE', Connection}.
