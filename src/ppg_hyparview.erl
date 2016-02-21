@@ -54,7 +54,10 @@
         }).
 
 -opaque view() :: #?VIEW{}.
+%% A HyParView instance
+
 -opaque connection() :: reference().
+%% An identifier of a logical connection between two peers
 
 -type ttl() :: non_neg_integer().
 %% Time To Live
@@ -62,13 +65,14 @@
 -type event() :: {up, ppg:peer(), connection()}
                | {down, ppg:peer(), connection()}
                | {broadcast, term()}.
+%% An event which occured by the module and handled by some upper layer modules
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
-%% NOTE: 1000ノードくらいまでならこのパラメータで十分
 -spec default_options() -> [ppg:hyparview_option()].
 default_options() ->
+    %% NOTE: Below default values may be sufficient for a group which have less than one thousand members.
     [
      {active_view_size, 4},
      {passive_view_size, 20},
@@ -208,7 +212,8 @@ handle_neighbor({low,  Peer}, View) ->
 
 -spec handle_foreigner(ppg:peer(), view()) -> view().
 handle_foreigner(Peer, View0) ->
-    %% TODO: 論文中ではpassiveを削除しない、と書かれているのでそれに合わせる? => 実装の簡潔性を取りたいので注記付きで今の実装のままにする
+    %% For simplicity, we remove the peer which have rejected a NEIGHBOR request from the passive view
+    %% (It is different behavior from the original paper)
     View1 = remove_passive_peer(Peer, View0),
     promote_passive_peer_if_needed(View1).
 
@@ -235,7 +240,7 @@ start_connectivity_check_if_needed(View) ->
     case self() =:= ContactPeer of
         true  -> View;
         false ->
-            %% TODO: より厳格な接続性の保証を行う
+            %% FIXME: Replace to a more strict and scalable means for assurance of the connectivity of the graph
             case is_integer(erlang:read_timer(View#?VIEW.rejoin_timer)) of
                 true  -> View;
                 false ->
@@ -362,7 +367,7 @@ enqueue_event(Event, View) ->
 -spec add_peers_to_passive_view([ppg:peer()], view()) -> view().
 add_peers_to_passive_view(Peers0, View0) ->
     Peers1 = Peers0 -- [self() | maps:keys(View0#?VIEW.active_view)],
-    View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)}, % NOTE: 後でまた追加するのでdemonitorはしない
+    View1 = View0#?VIEW{passive_view = maps:without(Peers1, View0#?VIEW.passive_view)}, % Temporary removed from the view
     View2 = ensure_passive_view_free_space(length(Peers1), View1),
     PassiveView = maps:merge(View2#?VIEW.passive_view, maps:from_list([{P, ok} || P <- Peers1])),
     View2#?VIEW{passive_view = PassiveView}.
@@ -382,7 +387,7 @@ promote_passive_peer_if_needed(View) ->
     case ActivePeerCount < View#?VIEW.active_view_size of
         false -> View;
         true  ->
-            %% NOTE: remove in progress peers
+            %% NOTE: Removes peers in progress
             Candidates = maps:filter(fun (P, _) -> not maps:is_key(P, View#?VIEW.monitors) end, View#?VIEW.passive_view),
             case {ppg_maps:random_key(Candidates), ActivePeerCount} of
                 {error,      0} -> join(View);
