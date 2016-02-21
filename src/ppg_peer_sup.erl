@@ -25,7 +25,7 @@
 start_link() ->
     supervisor:start_link(?MODULE, []).
 
--spec start_child(ppg:name(), ppg:member(), ppg:join_options()) -> {ok, ppg:peer()} | {error, Reason} when
+-spec start_child(ppg:name(), ppg:member(), ppg:join_options()) -> {ok, ppg_peer:peer()} | {error, Reason} when
       Reason :: {no_such_group, ppg:name()} | term().
 start_child(Group, Member, Options) ->
     case ppg_group_sup:find_child(Group) of
@@ -33,7 +33,7 @@ start_child(Group, Member, Options) ->
         {ok, Sup} -> supervisor:start_child(Sup, [Group, Member, Options])
     end.
 
--spec which_children(pid()) -> [ppg:peer()].
+-spec which_children(pid()) -> [ppg_peer:peer()].
 which_children(Sup) ->
     [P || {_, P, _, _} <- supervisor:which_children(Sup)].
 

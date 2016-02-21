@@ -16,6 +16,7 @@
 -export([get_graph/2]).
 
 -export_type([graph/0]).
+-export_type([peer/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'gen_server' Callback API
@@ -38,9 +39,11 @@
           tree :: ppg_plumtree:tree()
         }).
 
--type graph() :: [{ppg:peer(), ppg:member(), [ppg_plumtree:peer()]}].
+-type graph() :: [{peer(), ppg:member(), [ppg_plumtree:peer()]}].
 
 -type from() :: {reference(), pid()}.
+
+-type peer() :: ppg:channel().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -49,19 +52,19 @@
 start_link(Group, Member, Options) ->
     gen_server:start_link(?MODULE, [Group, Member, Options], []).
 
--spec stop(ppg:peer()) -> ok.
+-spec stop(peer()) -> ok.
 stop(Peer) ->
     gen_server:stop(Peer).
 
--spec broadcast(ppg:peer(), ppg:message()) -> ok.
+-spec broadcast(peer(), ppg:message()) -> ok.
 broadcast(Peer, Message) ->
     gen_server:call(Peer, {broadcast, Message}).
 
--spec get_member(ppg:peer()) -> ppg:member().
+-spec get_member(peer()) -> ppg:member().
 get_member(Peer) ->
     gen_server:call(Peer, get_member).
 
--spec get_graph(ppg:peer(), timeout()) -> graph().
+-spec get_graph(peer(), timeout()) -> graph().
 get_graph(Peer, Timeout) ->
     Tag = make_ref(),
     {_, Monitor} = spawn_monitor(?MODULE, build_graph, [{Tag, self()}, Peer, Timeout]),
@@ -81,10 +84,10 @@ init([Group, Member, Options]) ->
     _ = monitor(process, Member),
 
     View0 = ppg_hyparview:new(Group, proplists:get_value(hyparview, Options, [])),
-    View1 = ppg_hyparview:join(View0),
-    Tree  = ppg_plumtree:new(Member, ppg_hyparview:get_peers(View1), proplists:get_value(plumtree, Options, [])),
+    Tree0 = ppg_plumtree:new(Member, proplists:get_value(plumtree, Options, [])),
+    {Tree1, View1} = ppg_hyparview:join(Tree0, View0),
 
-    State = #?STATE{view = View1, tree = Tree},
+    State = #?STATE{view = View1, tree = Tree1},
     {ok, State}.
 
 %% @private
@@ -120,26 +123,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%----------------------------------------------------------------------------------------------------------------------
 -spec handle_hyparview_info(term(), #?STATE{}) -> {noreply, #?STATE{}} | ignore.
 handle_hyparview_info(Info, State) ->
-    case ppg_hyparview:handle_info(Info, State#?STATE.view) of
-        ignore      -> ignore;
-        {ok, View0} ->
-            {Queue, View1} = ppg_hyparview:flush_queue(View0),
-            Tree =
-                lists:foldl(
-                  fun ({up, Peer, Conn},  Acc) -> ppg_plumtree:neighbor_up(Peer, Conn, Acc);
-                      ({down, Peer,Conn}, Acc) -> ppg_plumtree:neighbor_down(Peer, Conn, Acc);
-                      ({broadcast, Msg},  Acc) -> ppg_plumtree:system_broadcast(Msg, Acc)
-                  end,
-                  State#?STATE.tree,
-                  Queue),
-            {noreply, State#?STATE{view = View1, tree = Tree}}
+    case ppg_hyparview:handle_info(Info, State#?STATE.tree, State#?STATE.view) of
+        ignore             -> ignore;
+        {ok, {Tree, View}} -> {noreply, State#?STATE{tree = Tree, view = View}}
     end.
 
 -spec handle_plumtree_info(term(), #?STATE{}) -> {noreply, #?STATE{}} | ignore.
 handle_plumtree_info(Info, State) ->
-    case ppg_plumtree:handle_info(Info, State#?STATE.tree) of
-        ignore     -> ignore;
-        {ok, Tree} -> {noreply, State#?STATE{tree = Tree}}
+    case ppg_plumtree:handle_info(Info, State#?STATE.view, State#?STATE.tree) of
+        ignore             -> ignore;
+        {ok, {View, Tree}} -> {noreply, State#?STATE{view = View, tree = Tree}}
     end.
 
 -spec handle_peer_info(term(), #?STATE{}) -> {noreply, #?STATE{}} | {stop, Reason::term(), #?STATE{}}.
@@ -176,7 +169,7 @@ reply({Tag, Pid}, Message) ->
     ok.
 
 %% @private
--spec build_graph(from(), ppg:peer(), timeout()) -> ok.
+-spec build_graph(from(), peer(), timeout()) -> ok.
 build_graph(From, Peer, Timeout) when is_integer(Timeout) ->
     _ = erlang:send_after(Timeout, self(), timeout),
     build_graph(From, Peer, infinity);
@@ -204,7 +197,7 @@ receive_graph(Tag, Acc, UnknownEdges0) ->
                   UnknownEdges0,
                   Peers),
             case gb_sets:is_empty(UnknownEdges1) of
-                true  -> [Entry | Acc]; % HyParViewの性質上、未知の辺がないなら全てのピアが探索済みだと分かる (quiescentな状態なら)
+                true  -> [Entry | Acc]; % All edges have been traversed (if the graph is connected)
                 false -> receive_graph(Tag, [Entry | Acc], UnknownEdges1)
             end
     end.

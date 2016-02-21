@@ -11,12 +11,7 @@ new_test_() ->
     [
      {"Creates an instance",
       fun () ->
-              ppg_hyparview:new(Group),
+              ppg_hyparview:new(Group, []),
               ?assert(true)
-      end},
-     {"The initial view is empty",
-      fun () ->
-              View = ppg_hyparview:new(Group),
-              ?assertEqual([], ppg_hyparview:get_peers(View))
       end}
     ].

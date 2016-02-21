@@ -21,7 +21,7 @@
 
 -export_type([name/0]).
 -export_type([member/0]).
--export_type([peer/0]).
+-export_type([channel/0]).
 -export_type([message/0]).
 
 -export_type([join_options/0, join_option/0]).
@@ -29,21 +29,23 @@
 -export_type([hyparview_option/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
-%% Macros & Types
+%% Types
 %%----------------------------------------------------------------------------------------------------------------------
 -type name() :: term().
+%% Group Name
+
 -type member() :: pid().
+-type channel() :: pid().
 -type message() :: term().
--type peer() :: pid(). % TODO: 適切な名前に変える
 
 -type join_options() :: [join_option()].
 
 -type join_option() :: {plumtree, [plumtree_option()]}
                      | {hyparview, [hyparview_option()]}.
 
--type plumtree_option() :: {ihave_timeout, timeout()}
-                         | {wehave_retention_period, timeout()}
-                         | {max_nohave_count, pos_integer()}. % TODO: rename
+-type plumtree_option() :: {gossip_wait_timeout, timeout()}
+                         | {ihave_retention_period, timeout()}
+                         | {wehave_retention_period, timeout()}.
 
 -type hyparview_option() :: {active_view_size, pos_integer()}
                           | {passive_view_size, pos_integer()}
@@ -82,7 +84,7 @@ which_groups() ->
     [Group || {Group, _} <- ppg_group_sup:which_children()].
 
 %% TODO: 静止状態ではない場合には結果の正しさを保証しない旨を記述
--spec get_members(name()) -> {ok, [{member(), peer()}]} | {error, {no_such_group, name()}}.
+-spec get_members(name()) -> {ok, [{member(), channel()}]} | {error, {no_such_group, name()}}.
 get_members(Group) ->
     case get_closest_member(Group) of
         {error, Reason}  -> {error, Reason};
@@ -92,7 +94,7 @@ get_members(Group) ->
     end.
 
 %% TODO: ローカルにメンバーがいる or 静止状態ではない場合には結果の正しさを保証しない旨を記述
--spec get_closest_member(name()) -> {ok, {member(), peer()}} | {error, Reason} when
+-spec get_closest_member(name()) -> {ok, {member(), channel()}} | {error, Reason} when
       Reason :: {no_such_group, name()}
               | {no_reachable_member, name()}.
 get_closest_member(Group) ->
@@ -111,7 +113,7 @@ get_closest_member(Group) ->
             end
     end.
 
--spec get_local_members(name()) -> {ok, [{member(), peer()}]} | {error, {no_such_group, name()}}.
+-spec get_local_members(name()) -> {ok, [{member(), channel()}]} | {error, {no_such_group, name()}}.
 get_local_members(Group) ->
     case ppg_group_sup:find_child(Group) of
         error     -> {error, {no_such_group, Group}};
@@ -121,14 +123,14 @@ get_local_members(Group) ->
     end.
 
 %% @equiv join(Group, Member, default_join_options())
--spec join(name(), ppg:member()) -> {ok, peer()} | {error, {no_such_group, name()}}.
+-spec join(name(), ppg:member()) -> {ok, channel()} | {error, {no_such_group, name()}}.
 join(Group, Member) ->
     join(Group, Member, default_join_options()).
 
 %% NOTE: 必要であれば`Peer'に対してlink/monitorを行うこと
 %%
 %% `Peer'は{@link leave/1}や{@link broadcast/2}で使用する
--spec join(name(), ppg:member(), join_options()) -> {ok, Peer::peer()} | {error, {no_such_group, name()}}.
+-spec join(name(), ppg:member(), join_options()) -> {ok, channel()} | {error, {no_such_group, name()}}.
 join(Group, Member, Options) ->
     _ = is_list(Options) orelse error(badarg, [Group, Member, Options]),
     case ppg_peer_sup:start_child(Group, Member, Options) of
@@ -138,11 +140,11 @@ join(Group, Member, Options) ->
     end.
 
 %% NOTE: `Peer'が生きていない場合には失敗する
--spec leave(peer()) -> ok.
-leave(Peer) ->
-    ppg_peer:stop(Peer).
+-spec leave(channel()) -> ok.
+leave(Channel) ->
+    ppg_peer:stop(Channel).
 
 %% NOTE: `Peer'が生きていない場合には失敗する
--spec broadcast(peer(), message()) -> ok.
-broadcast(Peer, Message) ->
-    ppg_peer:broadcast(Peer, Message).
+-spec broadcast(channel(), message()) -> ok.
+broadcast(Channel, Message) ->
+    ppg_peer:broadcast(Channel, Message).

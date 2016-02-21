@@ -143,7 +143,7 @@ format_graph(Graph, Group, dot) ->
        "}\n"
       ]).
 
--spec generate_dot_nodes(ppg_peer:graph(), ppg:peer()) -> iodata().
+-spec generate_dot_nodes(ppg_peer:graph(), ppg_peer:peer()) -> iodata().
 generate_dot_nodes([], _) ->
     [];
 generate_dot_nodes([{Peer, Member, _} | Graph], ContactPeer) ->

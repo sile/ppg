@@ -33,14 +33,14 @@
 new(Group) ->
     #?STATE{group = Group}.
 
--spec find_peer(service()) -> {ok, ppg:peer()} | error.
+-spec find_peer(service()) -> {ok, ppg_peer:peer()} | error.
 find_peer(#?STATE{group = Group}) ->
     case global:whereis_name({?MODULE, Group}) of
         undefined -> error;
         Peer      -> {ok, Peer}
     end.
 
--spec get_peer(service()) -> ppg:peer().
+-spec get_peer(service()) -> ppg_peer:peer().
 get_peer(Service = #?STATE{group = Group}) ->
     case find_peer(Service) of
         {ok, Peer} -> Peer;

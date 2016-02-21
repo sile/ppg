@@ -17,6 +17,16 @@ Copyright (c) 2016 Takeru Ohta <phjgt308@gmail.com>
 
 
 
+### <a name="type-channel">channel()</a> ###
+
+
+<pre><code>
+channel() = pid()
+</code></pre>
+
+
+
+
 ### <a name="type-hyparview_option">hyparview_option()</a> ###
 
 
@@ -74,16 +84,7 @@ message() = term()
 name() = term()
 </code></pre>
 
-
-
-
-### <a name="type-peer">peer()</a> ###
-
-
-<pre><code>
-peer() = pid()
-</code></pre>
-
+ Group Name
 
 
 
@@ -91,7 +92,7 @@ peer() = pid()
 
 
 <pre><code>
-plumtree_option() = {ihave_timeout, timeout()} | {wehave_retention_period, timeout()} | {max_nohave_count, pos_integer()}
+plumtree_option() = {gossip_wait_timeout, timeout()} | {ihave_retention_period, timeout()} | {wehave_retention_period, timeout()}
 </code></pre>
 
 <a name="index"></a>
@@ -111,7 +112,7 @@ plumtree_option() = {ihave_timeout, timeout()} | {wehave_retention_period, timeo
 ### broadcast/2 ###
 
 <pre><code>
-broadcast(Peer::<a href="#type-peer">peer()</a>, Message::<a href="#type-message">message()</a>) -&gt; ok
+broadcast(Channel::<a href="#type-channel">channel()</a>, Message::<a href="#type-message">message()</a>) -&gt; ok
 </code></pre>
 <br />
 
@@ -147,7 +148,7 @@ delete(Group::<a href="#type-name">name()</a>) -&gt; ok
 ### get_closest_member/1 ###
 
 <pre><code>
-get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}} | {error, Reason}
+get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="#type-member">member()</a>, <a href="#type-channel">channel()</a>}} | {error, Reason}
 </code></pre>
 
 <ul class="definitions"><li><code>Reason = {no_such_group, <a href="#type-name">name()</a>} | {no_reachable_member, <a href="#type-name">name()</a>}</code></li></ul>
@@ -157,7 +158,7 @@ get_closest_member(Group::<a href="#type-name">name()</a>) -&gt; {ok, {<a href="
 ### get_local_members/1 ###
 
 <pre><code>
-get_local_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_local_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-channel">channel()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -166,7 +167,7 @@ get_local_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="
 ### get_members/1 ###
 
 <pre><code>
-get_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-peer">peer()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
+get_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-member">member()</a>, <a href="#type-channel">channel()</a>}]} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -175,7 +176,7 @@ get_members(Group::<a href="#type-name">name()</a>) -&gt; {ok, [{<a href="#type-
 ### join/2 ###
 
 <pre><code>
-join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>) -&gt; {ok, <a href="#type-peer">peer()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
+join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>) -&gt; {ok, <a href="#type-channel">channel()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -186,7 +187,7 @@ Equivalent to [`join(Group, Member, default_join_options())`](#join-3).
 ### join/3 ###
 
 <pre><code>
-join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>, Options::<a href="#type-join_options">join_options()</a>) -&gt; {ok, Peer::<a href="#type-peer">peer()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
+join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member">ppg:member()</a>, Options::<a href="#type-join_options">join_options()</a>) -&gt; {ok, <a href="#type-channel">channel()</a>} | {error, {no_such_group, <a href="#type-name">name()</a>}}
 </code></pre>
 <br />
 
@@ -195,7 +196,7 @@ join(Group::<a href="#type-name">name()</a>, Member::<a href="ppg.md#type-member
 ### leave/1 ###
 
 <pre><code>
-leave(Peer::<a href="#type-peer">peer()</a>) -&gt; ok
+leave(Channel::<a href="#type-channel">channel()</a>) -&gt; ok
 </code></pre>
 <br />
 
