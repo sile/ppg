@@ -66,11 +66,13 @@ leave_n(Group, N) ->
     {ok, Members} = ppg:get_members(Group),
     lists:foreach(fun ({_, Peer}) -> ok = ppg:leave(Peer) end, lists:sublist(shuffle(Members), N)).
 
--spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), Options) ->
-                               MissingMessageCount when
+%% TODO: suspendを追加する
+%% TODO: MemberCountとMessageCountを分ける
+%% TODO: show messages duplication rate
+-spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), Options) -> ReceivedMessageCount when
       Options :: [{group, ppg:name()} |
                   ppg:join_option()],
-      MissingMessageCount :: non_neg_integer().
+      ReceivedMessageCount :: non_neg_integer().
 reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Options) ->
     Group = proplists:get_value(group, Options, make_ref()),
     Message = make_ref(),
@@ -86,7 +88,8 @@ reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Opt
                          {ok, Peer} = ppg:join(Group, self(), Options),
                          _ = timer:sleep(rand:uniform(BeforeBroadcast)),
                          ok = ppg:broadcast(Peer, Message),
-                         _ = timer:sleep(rand:uniform(AfterBroadcast))
+                         _ = timer:kill_after(rand:uniform(AfterBroadcast), self()),
+                         flush_loop()
                  end)) || _ <- lists:seq(1, MessageCount)],
         Loop =
             fun Loop (Count, [])   -> Count;
@@ -96,8 +99,7 @@ reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Opt
                         {'DOWN', Ref, _, _, _} -> Loop(Count, Rest -- [Ref])
                     end
             end,
-        MissingCount = MessageCount - Loop(0, Monitors),
-        MissingCount
+        Loop(0, Monitors)
     after
         ok = ppg:delete(Group)
     end.
@@ -105,6 +107,12 @@ reachability_test(MessageCount, BeforeJoin, BeforeBroadcast, AfterBroadcast, Opt
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%----------------------------------------------------------------------------------------------------------------------
+-spec flush_loop() -> no_return().
+flush_loop() ->
+    receive
+        _ -> flush_loop()
+    end.
+
 -spec format_graph(ppg_peer:graph(), ppg:name(), native) -> ppg_peer:graph();
                   (ppg_peer:graph(), ppg:name(), dot)    -> binary();
                   (ppg_peer:graph(), ppg:name(), {png, graphviz_command(), file:name_all()}) -> ok.
