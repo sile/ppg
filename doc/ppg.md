@@ -31,7 +31,7 @@ channel() = pid()
 
 
 <pre><code>
-hyparview_option() = {active_view_size, pos_integer()} | {passive_view_size, pos_integer()} | {active_random_walk_length, pos_integer()} | {passive_random_walk_length, pos_integer()} | {shuffle_count, pos_integer()} | {shuffle_interval, timeout()} | {max_broadcast_delay, timeout()} | {allowable_disconnection_period, timeout()}
+hyparview_option() = {active_view_size, pos_integer()} | {passive_view_size, pos_integer()} | {active_random_walk_length, pos_integer()} | {passive_random_walk_length, pos_integer()} | {shuffle_count, pos_integer()} | {shuffle_interval, timeout()}
 </code></pre>
 
 

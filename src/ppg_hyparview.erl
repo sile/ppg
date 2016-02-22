@@ -31,23 +31,19 @@
           passive_view = #{} :: #{ppg_peer:peer() => ok},
           monitors     = #{} :: #{ppg_peer:peer() => reference()},
 
-          %% Timers
-          shuffle_timer      = make_ref() :: reference(),
-          connectivity_timer = make_ref() :: reference(),
-          rejoin_timer       = make_ref() :: reference(),
+          %% Timer
+          shuffle_timer = make_ref() :: reference(),
 
           %% Contact Service
           contact_service :: ppg_contact_service:service(),
 
           %% Protocol Parameters
-          active_view_size               :: pos_integer(),
-          passive_view_size              :: pos_integer(),
-          active_random_walk_length      :: pos_integer(),
-          passive_random_walk_length     :: pos_integer(),
-          shuffle_count                  :: pos_integer(),
-          shuffle_interval               :: timeout(),
-          max_broadcast_delay            :: timeout(),
-          allowable_disconnection_period :: timeout()
+          active_view_size           :: pos_integer(),
+          passive_view_size          :: pos_integer(),
+          active_random_walk_length  :: pos_integer(),
+          passive_random_walk_length :: pos_integer(),
+          shuffle_count              :: pos_integer(),
+          shuffle_interval           :: timeout()
         }).
 
 -opaque view() :: #?VIEW{}.
@@ -73,9 +69,7 @@ default_options() ->
      {active_random_walk_length, 5},
      {passive_random_walk_length, 2},
      {shuffle_count, 4},
-     {shuffle_interval, 10 * 60 * 1000},
-     {max_broadcast_delay, 10 * 1000},
-     {allowable_disconnection_period, 60 * 1000}
+     {shuffle_interval, 10 * 60 * 1000}
     ].
 
 -spec new(ppg:name(), [ppg:hyparview_option()]) -> view().
@@ -97,9 +91,7 @@ new(Group, Options0) ->
             active_random_walk_length = Get(active_random_walk_length, fun ppg_util:is_pos_integer/1),
             passive_random_walk_length = Get(passive_random_walk_length, fun ppg_util:is_pos_integer/1),
             shuffle_count = Get(shuffle_count, fun ppg_util:is_pos_integer/1),
-            shuffle_interval = Get(shuffle_interval, fun ppg_util:is_timeout/1),
-            max_broadcast_delay = Get(max_broadcast_delay, fun ppg_util:is_timeout/1),
-            allowable_disconnection_period = Get(allowable_disconnection_period, fun ppg_util:is_timeout/1)
+            shuffle_interval = Get(shuffle_interval, fun ppg_util:is_timeout/1)
            },
     schedule_shuffle(View).
 
@@ -130,9 +122,7 @@ handle_info({'NEIGHBOR',     Arg},    Tree, View) -> {ok, handle_neighbor(Arg, T
 handle_info({'FOREIGNER',    Arg},    Tree, View) -> {ok, handle_foreigner(Arg, Tree, View)};
 handle_info({'SHUFFLE',      Arg},    Tree, View) -> {ok, {Tree, handle_shuffle(Arg, View)}};
 handle_info({'SHUFFLEREPLY', Arg},    Tree, View) -> {ok, {Tree, handle_shufflereply(Arg, View)}};
-handle_info({'CONNECTIVITY', Arg},    Tree, View) -> {ok, handle_connectivity(Arg, Tree, View)};
 handle_info({?MODULE, start_shuffle}, Tree, View) -> {ok, handle_start_shuffle(Tree, View)};
-handle_info({?MODULE, rejoin},        Tree, View) -> {ok, join(Tree, View)};
 handle_info({'DOWN', Ref, _, Pid, _}, Tree, View) ->
     case View of
         #?VIEW{monitors = #{Pid := Ref}} ->
@@ -181,10 +171,9 @@ handle_disconnect({Connection, Peer}, IsPeerDown, Tree0, View0) ->
         error              -> {Tree0, View0};
         {ok, Tree1, View1} ->
             {Tree2, View2} = promote_passive_peer_if_needed(Tree1, View1),
-            View3 = start_connectivity_check_if_needed(View2),
             case IsPeerDown of
-                true  -> {Tree2, View3};
-                false -> {Tree2, add_peers_to_passive_view([Peer], View3)}
+                true  -> {Tree2, View2};
+                false -> {Tree2, add_peers_to_passive_view([Peer], View2)}
             end
     end.
 
@@ -220,23 +209,6 @@ handle_shuffle({[Origin | _] = Peers, TimeToLive, Sender}, View) ->
 handle_shufflereply(Peers, View) ->
     add_peers_to_passive_view(Peers, View).
 
--spec start_connectivity_check_if_needed(view()) -> view().
-start_connectivity_check_if_needed(View) ->
-    ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
-    case self() =:= ContactPeer of
-        true  -> View;
-        false ->
-            %% FIXME: Replace to a more strict and scalable means for assurance of the connectivity of the graph
-            case is_integer(erlang:read_timer(View#?VIEW.rejoin_timer)) of
-                true  -> View;
-                false ->
-                    _ = ContactPeer ! message_connectivity(up),
-                    After = View#?VIEW.allowable_disconnection_period,
-                    Timer = erlang:send_after(After, self(), {?MODULE, rejoin}),
-                    View#?VIEW{rejoin_timer = Timer}
-            end
-    end.
-
 -spec schedule_shuffle(view()) -> view().
 schedule_shuffle(View = #?VIEW{shuffle_interval = infinity}) ->
     View;
@@ -262,29 +234,6 @@ handle_start_shuffle(Tree0, View0 = #?VIEW{shuffle_count = Count}) ->
             {ok, Next} -> Next ! message_shuffle(Peers, View1#?VIEW.active_random_walk_length)
         end,
     {Tree1, schedule_shuffle(View1)}.
-
--spec handle_connectivity(up|kick|down, tree(), view()) -> {tree(), view()}.
-handle_connectivity(up, Tree, View) ->
-    ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
-    case ContactPeer =:= self() of
-        false ->
-            %% Forwards to the latest contact peer
-            _ = ContactPeer ! message_connectivity(up),
-            {Tree, View};
-        true  ->
-            case erlang:read_timer(View#?VIEW.connectivity_timer) =/= false of
-                true  -> {Tree, View}; % The timer has been set
-                false ->
-                    After = max(0, View#?VIEW.allowable_disconnection_period - View#?VIEW.max_broadcast_delay),
-                    Timer = erlang:send_after(After, self(), message_connectivity(kick)),
-                    {Tree, View#?VIEW{connectivity_timer = Timer}}
-            end
-    end;
-handle_connectivity(kick, Tree, View) ->
-    {ppg_plumtree:system_broadcast(message_connectivity(down), Tree), View};
-handle_connectivity(down, Tree, View) ->
-    _ = ppg_util:cancel_and_flush_timer(View#?VIEW.rejoin_timer, {?MODULE, rejoin}),
-    {Tree, View}.
 
 -spec add_peer_to_active_view(ppg_peer:peer(), connection()|undefined, tree(), view()) -> {tree(), view()}.
 add_peer_to_active_view(Peer,_Connection, Tree, View) when Peer =:= self() ->
@@ -429,7 +378,3 @@ message_shuffle(Peers, TimeToLive) ->
 -spec message_shufflereply([ppg_peer:peer()]) -> {'SHUFFLEREPLY', [ppg_peer:peer()]}.
 message_shufflereply(Peers) ->
     {'SHUFFLEREPLY', Peers}.
-
--spec message_connectivity(up|kick|down) -> {'CONNECTIVITY', up|kick|down}.
-message_connectivity(Direction) ->
-    {'CONNECTIVITY', Direction}.
