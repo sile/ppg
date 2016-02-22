@@ -10,7 +10,10 @@
 -export([foreach/2]).
 -export([filtermap/2]).
 -export([any/2]).
+-export([all/2]).
+-export([partition/2]).
 -export([random_key/1, random_key/2]).
+-export([random_key_with_favoritism/2]).
 -export([random_keys/2]).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -41,6 +44,25 @@ any(Fun, Map) ->
               false,
               Map).
 
+-spec all(fun ((term(), term()) -> boolean()), #{}) -> boolean().
+all(Fun, Map) ->
+    maps:fold(fun (_, _, false) -> false;
+                  (K, V, _)     -> Fun(K, V)
+              end,
+              true,
+              Map).
+
+-spec partition(fun ((term(), term()) -> boolean()), #{}) -> {Satisfying::#{}, NotSatisfying::#{}}.
+partition(Fun, Map) ->
+    maps:fold(fun (K, V, {Satisfying, NotSatisfying}) ->
+                      case Fun(K, V) of
+                          true  -> {maps:put(K, V, Satisfying), NotSatisfying};
+                          false -> {Satisfying, maps:put(K, V, NotSatisfying)}
+                      end
+              end,
+              {#{}, #{}},
+              Map).
+
 -spec random_key(#{}) -> {ok, term()} | error.
 random_key(Map) ->
     case maps:size(Map) of
@@ -60,6 +82,14 @@ random_key(Map, Default) ->
     case random_key(Map) of
         error     -> Default;
         {ok, Key} -> Key
+    end.
+
+-spec random_key_with_favoritism(fun ((term(), term()) -> boolean()), #{}) -> {ok, term()} | error.
+random_key_with_favoritism(Fun, Map) ->
+    {Priors, Posteriors} = partition(Fun, Map),
+    case random_key(Priors) of
+        {ok, Key} -> {ok, Key};
+        error     -> random_key(Posteriors)
     end.
 
 -spec random_keys(non_neg_integer(), #{}) -> [term()].
