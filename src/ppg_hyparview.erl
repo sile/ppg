@@ -65,7 +65,7 @@ default_options() ->
     %% NOTE: Below default values may be sufficient for a group which have less than one thousand members.
     [
      {active_view_size, 4},
-     {passive_view_size, 20},
+     {passive_view_size, 24},
      {active_random_walk_length, 5},
      {passive_random_walk_length, 2},
      {shuffle_count, 4},
@@ -97,11 +97,9 @@ new(Group, Options0) ->
 
 -spec join(tree(), view()) -> {tree(), view()}.
 join(Tree, View) ->
-    ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
-    case ContactPeer =:= self() of
-        true  -> {Tree, View};
-        false ->
-            _ = ContactPeer ! message_join(),
+    case async_join(View) of
+        false -> {Tree, View};
+        true  ->
             %% Joined peer must be connected with at least one other peer (or timed out in the caller side)
             receive
                 {'CONNECT', Arg} -> handle_connect(Arg, Tree, View)
@@ -127,7 +125,7 @@ handle_info({'DOWN', Ref, _, Pid, _}, Tree, View) ->
     case View of
         #?VIEW{monitors = #{Pid := Ref}} ->
             case View of
-                #?VIEW{active_view = #{Pid := Conn}} -> {ok, handle_disconnect({Conn, Pid}, true, Tree, View)};
+                #?VIEW{active_view = #{Pid := Conn}} -> {ok, handle_disconnect({Conn, Pid, []}, true, Tree, View)};
                 #?VIEW{passive_view = #{Pid := _}}   -> {ok, handle_foreigner(Pid, Tree, View)}
             end;
         _ -> ignore
@@ -165,15 +163,16 @@ handle_forward_join({NewPeer, TimeToLive, Sender}, Tree, View) ->
 handle_connect({Conn, Peer}, Tree, View) ->
     add_peer_to_active_view(Peer, Conn, Tree, View).
 
--spec handle_disconnect({connection(), ppg_peer:peer()}, boolean(), tree(), view()) -> {tree(), view()}.
-handle_disconnect({Connection, Peer}, IsPeerDown, Tree0, View0) ->
-    case disconnect_peer(Peer, Connection, Tree0, View0) of
-        error              -> {Tree0, View0};
-        {ok, Tree1, View1} ->
-            {Tree2, View2} = promote_passive_peer_if_needed(Tree1, View1),
+-spec handle_disconnect({connection(), ppg_peer:peer(), [ppg_peer:peer()]}, boolean(), tree(), view()) -> {tree(), view()}.
+handle_disconnect({Connection, Peer, PriorPeers}, IsPeerDown, Tree0, View0) ->
+    View1 = add_peers_to_passive_view(PriorPeers, View0),
+    case disconnect_peer(Peer, Connection, Tree0, View1) of
+        error              -> {Tree0, View1};
+        {ok, Tree1, View2} ->
+            {Tree2, View3} = promote_passive_peer_if_needed(Tree1, View2),
             case IsPeerDown of
-                true  -> {Tree2, View2};
-                false -> {Tree2, add_peers_to_passive_view([Peer], View2)}
+                true  -> {Tree2, View3};
+                false -> {Tree2, add_peers_to_passive_view([Peer], View3)}
             end
     end.
 
@@ -209,18 +208,10 @@ handle_shuffle({[Origin | _] = Peers, TimeToLive, Sender}, View) ->
 handle_shufflereply(Peers, View) ->
     add_peers_to_passive_view(Peers, View).
 
--spec schedule_shuffle(view()) -> view().
-schedule_shuffle(View = #?VIEW{shuffle_interval = infinity}) ->
-    View;
-schedule_shuffle(View = #?VIEW{shuffle_interval = Interval}) ->
-    After = (Interval div 2) + (rand:uniform(Interval + 1) - 1),
-    Timer = ppg_util:cancel_and_send_after(View#?VIEW.shuffle_timer, After, self(), {?MODULE, start_shuffle}),
-    View#?VIEW{shuffle_timer = Timer}.
-
 -spec handle_start_shuffle(tree(), view()) -> {tree(), view()}.
 handle_start_shuffle(Tree0, View0 = #?VIEW{shuffle_count = Count}) ->
     {Tree1, View1} =
-        case is_small_active_view(View0) of
+        case is_small_active_view(View0) orelse not has_prior_peer(View0) of
             false -> {Tree0, View0};
             true  -> promote_passive_peer_if_needed(Tree0, View0)
         end,
@@ -234,6 +225,21 @@ handle_start_shuffle(Tree0, View0 = #?VIEW{shuffle_count = Count}) ->
             {ok, Next} -> Next ! message_shuffle(Peers, View1#?VIEW.active_random_walk_length)
         end,
     {Tree1, schedule_shuffle(View1)}.
+
+-spec schedule_shuffle(view()) -> view().
+schedule_shuffle(View = #?VIEW{shuffle_interval = infinity}) ->
+    View;
+schedule_shuffle(View = #?VIEW{shuffle_interval = Interval}) ->
+    After = (Interval div 2) + (rand:uniform(Interval + 1) - 1),
+    Timer = ppg_util:cancel_and_send_after(View#?VIEW.shuffle_timer, After, self(), {?MODULE, start_shuffle}),
+    View#?VIEW{shuffle_timer = Timer}.
+
+-spec async_join(view()) -> boolean().
+async_join(View) ->
+    ContactPeer = ppg_contact_service:get_peer(View#?VIEW.contact_service),
+    Joining = ContactPeer =/= self(),
+    _ = Joining andalso (ContactPeer ! message_join()),
+    Joining.
 
 -spec add_peer_to_active_view(ppg_peer:peer(), connection()|undefined, tree(), view()) -> {tree(), view()}.
 add_peer_to_active_view(Peer,_Connection, Tree, View) when Peer =:= self() ->
@@ -261,7 +267,10 @@ ensure_active_view_free_space(Tree0, View0) ->
     case maps:size(View0#?VIEW.active_view) < View0#?VIEW.active_view_size of
         true  -> {Tree0, View0};
         false ->
-            {ok, Peer} = ppg_maps:random_key(View0#?VIEW.active_view),
+            %% NOTE: We suppose that there will be at least one high priority peer after dropping
+            %%       (or in other path, the peer is trying to fill such peer)
+            {ok, Peer} =
+                ppg_maps:random_key_with_favoritism(fun (P, _) -> not is_prior(P, View0) end, View0#?VIEW.active_view),
             {ok, Tree1, View1} = disconnect_peer(Peer, undefined, Tree0, View0),
             View2 = add_peers_to_passive_view([Peer], View1),
             ensure_active_view_free_space(Tree1, View2)
@@ -280,9 +289,15 @@ connect_to_peer(Peer, Connection, Tree0, View0) ->
     {Tree1, View1#?VIEW{active_view = ActiveView, monitors = Monitors}}.
 
 -spec disconnect_peer(ppg_peer:peer(), connection()|undefined, tree(), view()) -> {ok, tree(), view()} | error.
-disconnect_peer(Peer, undefined, Tree, View) ->
+disconnect_peer(Peer, undefined, Tree, View = #?VIEW{contact_service = Contact}) ->
     Connection = maps:get(Peer, View#?VIEW.active_view),
-    _ = Peer ! message_disconnect(Connection),
+    HigherPeers =
+        ppg_maps:random_keys(
+          View#?VIEW.shuffle_count,
+          maps:merge(
+            maps:filter(fun (P, _) -> is_prior(P, Peer, Contact) andalso is_prior(self(), P, Contact) end, View#?VIEW.active_view),
+            maps:filter(fun (P, _) -> is_prior(P, Peer, Contact) end, View#?VIEW.passive_view))),
+    _ = Peer ! message_disconnect(Connection, HigherPeers),
     disconnect_peer(Peer, Connection, Tree, View);
 disconnect_peer(Peer, Connection, Tree0, View) ->
     case View#?VIEW.active_view of
@@ -321,26 +336,58 @@ ensure_passive_view_free_space(Room, View) ->
     end.
 
 -spec promote_passive_peer_if_needed(tree(), view()) -> {tree(), view()}.
-promote_passive_peer_if_needed(Tree, View) ->
-    ActivePeerCount = maps:size(View#?VIEW.active_view),
-    case ActivePeerCount < View#?VIEW.active_view_size of
-        false -> {Tree, View};
+promote_passive_peer_if_needed(Tree0, View0) ->
+    ActivePeerCount = maps:size(View0#?VIEW.active_view),
+    HasPriorPeer = has_prior_peer(View0),
+    case ActivePeerCount < View0#?VIEW.active_view_size of
+        false ->
+            case HasPriorPeer of
+                true  -> {Tree0, View0};
+                false ->
+                    {Tree1, View1} = ensure_active_view_free_space(Tree0, View0),
+                    promote_passive_peer_if_needed(Tree1, View1)
+            end;
         true  ->
-            %% NOTE: Removes peers in progress
-            Candidates = maps:filter(fun (P, _) -> not maps:is_key(P, View#?VIEW.monitors) end, View#?VIEW.passive_view),
-            case {ppg_maps:random_key(Candidates), ActivePeerCount} of
-                {error,      0} -> join(Tree, View);
-                {error,      _} -> {Tree, View};
+            %% Removes peers in progress
+            Candidates = maps:filter(fun (P, _) -> not maps:is_key(P, View0#?VIEW.monitors) end, View0#?VIEW.passive_view),
+
+            %% Select higher priority peer if needed
+            Selected =
+                case HasPriorPeer of
+                    true  -> ppg_maps:random_key(Candidates);
+                    false -> ppg_maps:random_key(maps:filter(fun (P, _) -> is_prior(P, View0) end, Candidates))
+                end,
+            case {Selected, HasPriorPeer} of
+                {error, true}   -> {Tree0, View0};
+                {error, false}  -> _ = async_join(View0), {Tree0, View0};
                 {{ok, Peer}, _} ->
-                    _ = Peer ! message_neighbor(View),
-                    Monitors = maps:put(Peer, monitor(process, Peer), View#?VIEW.monitors),
-                    {Tree, View#?VIEW{monitors = Monitors}}
+                    IsHigh = is_small_active_view(View0) orelse not HasPriorPeer,
+                    _ = Peer ! message_neighbor(IsHigh),
+                    Monitors = maps:put(Peer, monitor(process, Peer), View0#?VIEW.monitors),
+                    {Tree0, View0#?VIEW{monitors = Monitors}}
             end
     end.
 
 -spec is_small_active_view(view()) -> boolean().
 is_small_active_view(#?VIEW{active_view = ActiveView, active_view_size = Size}) ->
     maps:size(ActiveView) < max(1, Size div 2).
+
+-spec has_prior_peer(view()) -> boolean().
+has_prior_peer(#?VIEW{active_view = ActiveView, contact_service = ContactService}) ->
+    ppg_contact_service:find_peer(ContactService) =:= {ok, self()} orelse
+        ppg_maps:any(fun (P, _) -> is_prior(self(), P, ContactService) end, ActiveView).
+
+-spec is_prior(ppg_peer:peer(), view()) -> boolean().
+is_prior(Peer, View) ->
+    is_prior(Peer, self(), View#?VIEW.contact_service).
+
+-spec is_prior(ppg_peer:peer(), ppg_peer:peer(), ppg_contact_service:service()) -> boolean().
+is_prior(PeerA, PeerB, ContactService) ->
+    case ppg_contact_service:find_peer(ContactService) of
+        {ok, PeerB} -> false;
+        {ok, PeerA} -> true;
+        _           -> PeerA > PeerB
+    end.
 
 -spec message_join() -> {'JOIN', NewPeer::ppg_peer:peer()}.
 message_join() ->
@@ -357,13 +404,14 @@ message_forward_join(NewPeer, TimeToLive) ->
 message_connect(Conn) ->
     {'CONNECT', {Conn, self()}}.
 
--spec message_disconnect(connection()) -> {'DISCONNECT', {connection(), ppg_peer:peer()}}.
-message_disconnect(Conn) ->
-    {'DISCONNECT', {Conn, self()}}.
+-spec message_disconnect(connection(), HigherPeers) -> {'DISCONNECT', {connection(), ppg_peer:peer(), HigherPeers}} when
+      HigherPeers :: [ppg_peer:peer()].
+message_disconnect(Conn, HigherPeers) ->
+    {'DISCONNECT', {Conn, self(), HigherPeers}}.
 
--spec message_neighbor(view()) -> {'NEIGHBOR', {high|low, ppg_peer:peer()}}.
-message_neighbor(View) ->
-    Priority = case is_small_active_view(View) of true -> high; _ -> low end,
+-spec message_neighbor(boolean()) -> {'NEIGHBOR', {high|low, ppg_peer:peer()}}.
+message_neighbor(IsPrior) ->
+    Priority = case IsPrior of true -> high; false -> low end,
     {'NEIGHBOR', {Priority, self()}}.
 
 -spec message_foreigner() -> {'FOREIGNER', ppg_peer:peer()}.
