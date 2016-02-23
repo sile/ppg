@@ -9,6 +9,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -export([foreach/2]).
 -export([filtermap/2]).
+-export([count/2]).
 -export([any/2]).
 -export([all/2]).
 -export([partition/2]).
@@ -34,6 +35,18 @@ filtermap(Fun, Map) ->
               end
       end,
       #{},
+      Map).
+
+-spec count(fun ((term(), term()) -> boolean()), #{}) -> non_neg_integer().
+count(Fun, Map) ->
+    maps:fold(
+      fun (K, V, Count) ->
+              case Fun(K, V) of
+                  true  -> Count + 1;
+                  false -> Count
+              end
+      end,
+      0,
       Map).
 
 -spec any(fun ((term(), term()) -> boolean()), #{}) -> boolean().

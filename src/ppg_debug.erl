@@ -163,7 +163,7 @@ generate_dot_edges([{From, _, Edges} | Graph]) ->
     [[begin
           Color = case Type of eager -> red; lazy -> blue end,
           io_lib:format("  \"~p\" -- \"~p\" [color=~s,penwidth=~p];\n", [From, To, Color, Weight+1])
-      end || #{pid := To, type := Type, nohaves := Weight} <- Edges, From < To],
+      end || #{pid := To, type := Type, ihaves := Weight} <- Edges, From < To],
      generate_dot_edges(Graph)].
 
 -spec shuffle(list()) -> list().
