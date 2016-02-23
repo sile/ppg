@@ -92,7 +92,7 @@ name() = term()
 
 
 <pre><code>
-plumtree_option() = {gossip_wait_timeout, timeout()} | {ihave_retention_period, timeout()} | {wehave_retention_period, timeout()}
+plumtree_option() = {gossip_wait_timeout, timeout()} | {ihave_retention_period, timeout()} | {wehave_retention_period, timeout()} | {ticktime, timeout()}
 </code></pre>
 
 <a name="index"></a>

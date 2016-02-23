@@ -45,7 +45,8 @@
 
 -type plumtree_option() :: {gossip_wait_timeout, timeout()}
                          | {ihave_retention_period, timeout()}
-                         | {wehave_retention_period, timeout()}.
+                         | {wehave_retention_period, timeout()}
+                         | {ticktime, timeout()}.
 
 -type hyparview_option() :: {active_view_size, pos_integer()}
                           | {passive_view_size, pos_integer()}

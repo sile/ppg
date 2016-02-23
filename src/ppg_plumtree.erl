@@ -33,7 +33,8 @@
         {
           pid                     :: ppg_peer:peer(),
           type = eager            :: peer_type(),
-          ihave = gb_sets:empty() :: gb_sets:set(message_id())
+          ihave = gb_sets:empty() :: gb_sets:set(message_id()),
+          in_tick = false         :: boolean()
         }).
 
 -record(schedule,
@@ -60,7 +61,8 @@
           %% Protocol Parameters
           gossip_wait_timeout     :: timeout(),
           ihave_retention_period  :: timeout(),
-          wehave_retention_period :: timeout()
+          wehave_retention_period :: timeout(),
+          ticktime                :: timeout()
         }).
 
 -opaque tree() :: #?TREE{}.
@@ -76,7 +78,9 @@
 
 -type event() :: {gossip_wait_timeout, message_id(), connection()}
                | {ihave_expire, message_id()}
-               | {wehave_expire, message_id()}.
+               | {wehave_expire, message_id()}
+               | {tick, connection()}
+               | {tack_timeout, connection()}.
 
 -type message_id() :: reference().
 -type message_type() :: 'APP' | 'SYS'.
@@ -94,7 +98,8 @@ default_options() ->
     [
      {gossip_wait_timeout, 50},
      {ihave_retention_period, 1 * 1000},
-     {wehave_retention_period, 5 * 1000}
+     {wehave_retention_period, 5 * 1000},
+     {ticktime, 30 * 1000}
     ].
 
 -spec new(ppg:member(), [ppg:plumtree_option()]) -> tree().
@@ -112,13 +117,15 @@ new(Member, Options0) ->
         member                  = Member,
         gossip_wait_timeout     = Get(gossip_wait_timeout, fun ppg_util:is_timeout/1),
         ihave_retention_period  = Get(ihave_retention_period, fun ppg_util:is_timeout/1),
-        wehave_retention_period = Get(wehave_retention_period, fun ppg_util:is_timeout/1)
+        wehave_retention_period = Get(wehave_retention_period, fun ppg_util:is_timeout/1),
+        ticktime                = Get(ticktime, fun ppg_util:is_timeout/1)
        }.
 
 -spec neighbor_up(ppg_peer:peer(), connection(), tree()) -> tree().
 neighbor_up(PeerPid, Connection, Tree) ->
     Connections = maps:put(Connection, #peer{pid = PeerPid}, Tree#?TREE.connections),
-    Tree#?TREE{connections = Connections}.
+    Schedule = schedule(Tree#?TREE.ticktime, {tick, Connection}, Tree#?TREE.schedule),
+    Tree#?TREE{connections = Connections, schedule = Schedule}.
 
 -spec neighbor_down(connection(), tree()) -> tree().
 neighbor_down(Connection, Tree) ->
@@ -157,7 +164,9 @@ get_peers(#?TREE{connections = Connections}) ->
 handle_info({'GOSSIP', Connection, Arg}, View, Tree) -> {ok, {View, handle_gossip(Arg, Connection, Tree)}};
 handle_info({'IHAVE',  Connection, Arg}, View, Tree) -> {ok, {View, handle_ihave(Arg, Connection, Tree)}};
 handle_info({'PRUNE',  Connection},      View, Tree) -> {ok, {View, handle_prune(Connection, Tree)}};
-handle_info({'GRAFT',  Connection, Arg}, View, Tree) -> {ok, handle_graft(Arg, Connection, View, Tree)};
+handle_info({'GRAFT',  Connection, Arg}, View, Tree) -> {ok, {View, handle_graft(Arg, Connection, Tree)}};
+handle_info({'TICK',   Connection},      View, Tree) -> {ok, {View, handle_tick(Connection, Tree)}};
+handle_info({'TACK',   Connection},      View, Tree) -> {ok, {View, handle_tack(Connection, Tree)}};
 handle_info({?MODULE, schedule},         View, Tree) -> {ok, handle_schedule(ppg_util:now_ms(), View, Tree)};
 handle_info(_Info, _View, _Tree)                     -> ignore.
 
@@ -199,21 +208,39 @@ handle_prune(Connection, Tree) ->
         true  -> become(lazy, Connection, Tree)
     end.
 
--spec handle_graft(message_id(), connection(), view(), tree()) -> {view(), tree()}.
-handle_graft(MsgId, Connection, View0, Tree0) ->
-    case maps:find(Connection, Tree0#?TREE.connections) of
-        error      -> {View0, Tree0}; % `Connection' has been disconnected
+-spec handle_graft(message_id(), connection(), tree()) -> tree().
+handle_graft(MsgId, Connection, Tree) ->
+    case maps:find(Connection, Tree#?TREE.connections) of
+        error      -> Tree; % `Connection' has been disconnected
         {ok, Peer} ->
-            case maps:find(MsgId, Tree0#?TREE.ihave) of
+            case maps:find(MsgId, Tree#?TREE.ihave) of
+                error ->
+                    %% The message's retention period has expired.
+                    _ = Peer#peer.pid ! message_prune(Connection),
+                    become(lazy, Connection, Tree);
                 {ok, Message} ->
                     _ = Peer#peer.pid ! message_gossip(Connection, MsgId, Message),
-                    {View0, become(eager, Connection, Tree0)};
-                error ->
-                    %% The message retention period has expired.
-                    %% This connection may be overloaded (disconnect to prevent a negative chain).
-                    {Tree1, View1} = ppg_hyparview:disconnect(Peer#peer.pid, Tree0, View0),
-                    {View1, Tree1} % TODO: Align the order
+                    become(eager, Connection, Tree)
             end
+    end.
+
+-spec handle_tick(connection(), tree()) -> tree().
+handle_tick(Connection, Tree) ->
+    case maps:find(Connection, Tree#?TREE.connections) of
+        error      -> Tree;
+        {ok, Peer} ->
+            _ = Peer#peer.pid ! message_tack(Connection),
+            Tree
+    end.
+
+-spec handle_tack(connection(), tree()) -> tree().
+handle_tack(Connection, Tree) ->
+    case maps:find(Connection, Tree#?TREE.connections) of
+        error      -> Tree;
+        {ok, Peer} ->
+            Connections = maps:put(Connection, Peer#peer{in_tick = false}, Tree#?TREE.connections),
+            Schedule = schedule(Tree#?TREE.ticktime, {tick, Connection}, Tree#?TREE.schedule),
+            Tree#?TREE{connections = Connections, schedule = Schedule}
     end.
 
 -spec handle_schedule(ppg_util:milliseconds(), view(), tree()) -> {view(), tree()}.
@@ -227,6 +254,24 @@ handle_schedule(Now, View0, Tree0) ->
             After = max(Time - Now, 10),
             Timer = erlang:send_after(After, self(), {?MODULE, schedule}),
             {View0, Tree0#?TREE{schedule = Schedule#schedule{timer = Timer}}};
+        {{_, {tick, Connection}}, Queue} ->
+            case maps:find(Connection, Tree0#?TREE.connections) of
+                error      -> handle_schedule(Now, View0, Tree0#?TREE{schedule = Schedule#schedule{queue = Queue}});
+                {ok, Peer} ->
+                    _ = Peer#peer.pid ! message_tick(Connection),
+                    Connections = maps:put(Connection, Peer#peer{in_tick = true}, Tree0#?TREE.connections),
+                    Schedule1 = schedule(Tree0#?TREE.ihave_retention_period, {tack_timeout, Connection},
+                                         Schedule#schedule{queue = Queue}),
+                    handle_schedule(Now, View0, Tree0#?TREE{connections = Connections, schedule = Schedule1})
+            end;
+        {{_, {tack_timeout, Connection}}, Queue} ->
+            case maps:find(Connection, Tree0#?TREE.connections) of
+                {ok, #peer{in_tick = true, pid = Pid}} ->
+                    {Tree1, View1} = ppg_hyparview:disconnect(Pid, Tree0, View0),
+                    handle_schedule(Now, View1, Tree1#?TREE{schedule = Schedule#schedule{queue = Queue}});
+                _ ->
+                    handle_schedule(Now, View0, Tree0#?TREE{schedule = Schedule#schedule{queue = Queue}})
+            end;
         {{_, {ihave_expire, MsgId}}, Queue} ->
             Tree1 = move_to_wehave(MsgId, Tree0),
             handle_schedule(Now, View0, Tree1#?TREE{schedule = Schedule#schedule{queue = Queue}});
@@ -341,3 +386,11 @@ message_graft(Connection, MsgId) ->
 -spec message_prune(connection()) -> {'PRUNE', connection()}.
 message_prune(Connection) ->
     {'PRUNE', Connection}.
+
+-spec message_tick(connection()) -> {'TICK', connection()}.
+message_tick(Connection) ->
+    {'TICK', Connection}.
+
+-spec message_tack(connection()) -> {'TACK', connection()}.
+message_tack(Connection) ->
+    {'TACK', Connection}.
