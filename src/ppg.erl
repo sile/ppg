@@ -41,7 +41,8 @@
 -type join_options() :: [join_option()].
 
 -type join_option() :: {plumtree, [plumtree_option()]}
-                     | {hyparview, [hyparview_option()]}.
+                     | {hyparview, [hyparview_option()]}
+                     | {transporter, ppg_transporter:transporter()}.
 
 -type plumtree_option() :: {gossip_wait_timeout, timeout()}
                          | {ihave_retention_period, timeout()}
