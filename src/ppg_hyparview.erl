@@ -13,12 +13,11 @@
 
 -export([new/2]).
 -export([join/2]).
--export([disconnect/3]).
--export([handle_info/3]).
+-export([handle_event/3]).
 
 -export_type([view/0]).
 -export_type([connection/0]).
--export_type([tree/0]).
+-export_type([queue/0]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros & Records & Types
@@ -55,7 +54,7 @@
 -type ttl() :: non_neg_integer().
 %% Time To Live
 
--type tree() :: ppg_plumtree:tree().
+-type queue() :: ppg_event_queue:queue().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -95,42 +94,38 @@ new(Group, Options0) ->
            },
     schedule_shuffle(View).
 
--spec join(tree(), view()) -> {tree(), view()}.
-join(Tree, View) ->
+-spec join(queue(), view()) -> {queue(), view()}.
+join(Queue, View) ->
     case async_join(View) of
-        false -> {Tree, View};
+        false -> {Queue, View};
         true  ->
             %% Joined peer must be connected with at least one other peer (or timed out in the caller side)
             receive
-                {'CONNECT', Arg} -> handle_connect(Arg, Tree, View)
+                {'CONNECT', Arg} -> handle_connect(Arg, Queue, View)
             end
     end.
 
--spec disconnect(ppg_peer:peer(), tree(), view()) -> {tree(), view()}.
-disconnect(Peer, Tree0, View0) ->
-    {ok, Tree1, View1} = disconnect_peer(Peer, undefined, Tree0, View0),
-    {Tree1, View1}.
-
--spec handle_info(term(), tree(), view()) -> {ok, {tree(), view()}} | ignore.
-handle_info({'JOIN',         Arg},    Tree, View) -> {ok, handle_join(Arg, Tree, View)};
-handle_info({'FORWARD_JOIN', Arg},    Tree, View) -> {ok, handle_forward_join(Arg, Tree, View)};
-handle_info({'CONNECT',      Arg},    Tree, View) -> {ok, handle_connect(Arg, Tree, View)};
-handle_info({'DISCONNECT',   Arg},    Tree, View) -> {ok, handle_disconnect(Arg, false, Tree, View)};
-handle_info({'NEIGHBOR',     Arg},    Tree, View) -> {ok, handle_neighbor(Arg, Tree, View)};
-handle_info({'FOREIGNER',    Arg},    Tree, View) -> {ok, handle_foreigner(Arg, Tree, View)};
-handle_info({'SHUFFLE',      Arg},    Tree, View) -> {ok, {Tree, handle_shuffle(Arg, View)}};
-handle_info({'SHUFFLEREPLY', Arg},    Tree, View) -> {ok, {Tree, handle_shufflereply(Arg, View)}};
-handle_info({?MODULE, start_shuffle}, Tree, View) -> {ok, handle_start_shuffle(Tree, View)};
-handle_info({'DOWN', Ref, _, Pid, _}, Tree, View) ->
+-spec handle_event(ppg_event_queue:event(), queue(), view()) -> {queue(), view()} | ignore.
+handle_event({recv, From, {'JOIN',         Arg}}, Queue, View) -> handle_join(Arg, From, Queue, View);
+handle_event({recv, From, {'FORWARD_JOIN', Arg}}, Queue, View) -> handle_forward_join(Arg, From, Queue, View);
+handle_event({recv, From, {'CONNECT',      Arg}}, Queue, View) -> handle_connect(Arg, From, Queue, View);
+handle_event({recv, From, {'DISCONNECT',   Arg}}, Queue, View) -> handle_disconnect(Arg, From, false, Queue, View);
+handle_event({recv, From, {'NEIGHBOR',     Arg}}, Queue, View) -> handle_neighbor(Arg, From, Queue, View);
+%% TODO: disconnectedで代替できないか
+handle_event({recv, From, {'FOREIGNER',    Arg}}, Queue, View) -> handle_foreigner(Arg, From, Queue, View);
+handle_event({recv, From, {'SHUFFLE',      Arg}}, Queue, View) -> handle_shuffle(Arg, From, Queue, View);
+handle_event({recv, From, {'SHUFFLEREPLY', Arg}}, Queue, View) -> handle_shufflereply(Arg, From, Queue, View);
+handle_event({?MODULE, start_shuffle},            Queue, View) -> handle_start_shuffle(Queue, View);
+handle_event({disconnect, Address},               Queue, View) ->
+    {ok, Queue1, View1} = disconnect_peer(Address, undefined, Queue, View),
+    {Queue1, View1};
+handle_event({disconnected, From, IsDown},        Queue, View) ->
+    {Address, _} = From,
     case View of
-        #?VIEW{monitors = #{Pid := Ref}} ->
-            case View of
-                #?VIEW{active_view = #{Pid := Conn}} -> {ok, handle_disconnect({Conn, Pid, []}, true, Tree, View)};
-                #?VIEW{passive_view = #{Pid := _}}   -> {ok, handle_foreigner(Pid, Tree, View)}
-            end;
-        _ -> ignore
+        #?VIEW{active_view  = #{Address := _}} -> handle_disconnect({Conn, Pid, []}, From, IsDown, Queue, View);
+        #?VIEW{passive_view = #{Address := _}} -> handle_foreigner(Address, From, Queue, View)
     end;
-handle_info(_Info, _Tree, _View) -> ignore.
+handle_event(_Event,                             _Queue,_View) -> ignore.
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Internal Functions

@@ -12,6 +12,7 @@
 -export_type([connection/0]).
 -export_type([connection_id/0]).
 -export_type([connection_data/0]).
+-export_type([from/0]).
 -export_type([message/0]).
 -export_type([handle_info_result/0]).
 
@@ -33,6 +34,7 @@
 -type connection_id() :: term().
 -type connection_data() :: term().
 -type message() :: term().
+-type from() :: {connection_id(), address()}.
 
 -type handle_info_result() ::
         ignore
