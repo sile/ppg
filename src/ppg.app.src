@@ -6,7 +6,8 @@
   {applications,
    [
     kernel,
-    stdlib
+    stdlib,
+    evel
    ]},
   {env,[]}
  ]}.

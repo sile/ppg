@@ -35,9 +35,9 @@ new(Group) ->
 
 -spec find_peer(service()) -> {ok, ppg_peer:peer()} | error.
 find_peer(#?STATE{group = Group}) ->
-    case global:whereis_name({?MODULE, Group}) of
-        undefined -> error;
-        Peer      -> {ok, Peer}
+    case evel:find_leader({?MODULE, Group}) of
+        error           -> error;
+        {ok, {Peer, _}} -> {ok, Peer}
     end.
 
 -spec get_peer(service()) -> ppg_peer:peer().
@@ -45,6 +45,6 @@ get_peer(Service = #?STATE{group = Group}) ->
     case find_peer(Service) of
         {ok, Peer} -> Peer;
         error      ->
-            _ = global:register_name({?MODULE, Group}, self()),
-            get_peer(Service)
+            {Peer, _} = evel:elect({?MODULE, Group}, self(), [{link, false}]),
+            Peer
     end.
