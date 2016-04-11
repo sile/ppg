@@ -1,4 +1,7 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc Supervisor for ppg_peer processes
 %% @private
@@ -21,10 +24,12 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
+%% @doc Starts a new supervisor
 -spec start_link() -> {ok, pid()} | {error, Reason::term()}.
 start_link() ->
     supervisor:start_link(?MODULE, []).
 
+%% @doc Starts a new child
 -spec start_child(ppg:name(), ppg:member(), ppg:join_options()) -> {ok, ppg_peer:peer()} | {error, Reason} when
       Reason :: {no_such_group, ppg:name()} | term().
 start_child(Group, Member, Options) ->
@@ -33,6 +38,7 @@ start_child(Group, Member, Options) ->
         {ok, Sup} -> supervisor:start_child(Sup, [Group, Member, Options])
     end.
 
+%% @doc Returns the list of existing children
 -spec which_children(pid()) -> [ppg_peer:peer()].
 which_children(Sup) ->
     [P || {_, P, _, _} <- supervisor:which_children(Sup)].

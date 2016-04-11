@@ -1,7 +1,9 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc Peer Contact Service
-%%
 %% @private
 -module(ppg_contact_service).
 
@@ -29,10 +31,12 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
+%% @doc Creates a new contact service instance(client) which associated with `Group'
 -spec new(ppg:name()) -> service().
 new(Group) ->
     #?STATE{group = Group}.
 
+%% @doc Finds the peer which behaves as the contact service
 -spec find_peer(service()) -> {ok, ppg_peer:peer()} | error.
 find_peer(#?STATE{group = Group}) ->
     case evel:find_leader({?MODULE, Group}) of
@@ -40,6 +44,9 @@ find_peer(#?STATE{group = Group}) ->
         {ok, {Peer, _}} -> {ok, Peer}
     end.
 
+%% @doc Gets the peer which behaves as the contact service
+%%
+%% If there is no such peer, the caller process will try to become the contact service
 -spec get_peer(service()) -> ppg_peer:peer().
 get_peer(Service = #?STATE{group = Group}) ->
     case find_peer(Service) of

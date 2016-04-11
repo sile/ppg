@@ -1,8 +1,11 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc Root Supervisor
 %% @private
--module('ppg_sup').
+-module(ppg_sup).
 
 -behaviour(supervisor).
 
@@ -19,6 +22,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
+%% @doc Starts the supervisor
 -spec start_link() -> {ok, pid()} | {error, Reason::term()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
@@ -32,4 +36,4 @@ init([]) ->
         [
          #{id => group_sup, start => {ppg_group_sup, start_link, []}, type => supervisor}
         ],
-    {ok, {#{strategy => rest_for_one}, Children}}.
+    {ok, {#{}, Children}}.

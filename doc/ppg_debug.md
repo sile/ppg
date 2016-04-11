@@ -8,8 +8,6 @@
 
 This module provides debugging functionalities.
 
-Copyright (c) 2016 Takeru Ohta <phjgt308@gmail.com>
-
 <a name="types"></a>
 
 ## Data Types ##

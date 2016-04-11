@@ -1,4 +1,7 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc Utility Functions
 %% @private
@@ -11,25 +14,20 @@
 -export([is_timeout/1]).
 -export([cancel_and_flush_timer/2]).
 -export([cancel_and_send_after/4]).
--export([now_ms/0]).
-
--export_type([milliseconds/0]).
-
-%%----------------------------------------------------------------------------------------------------------------------
-%% Types
-%%----------------------------------------------------------------------------------------------------------------------
--type milliseconds() :: non_neg_integer().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
--spec is_pos_integer(pos_integer() | term()) -> boolean().
+%% @doc Returns `true' if `X' is a positive integer, otherwise `false'
+-spec is_pos_integer(X :: (pos_integer() | term())) -> boolean().
 is_pos_integer(X) -> is_integer(X) andalso X > 0.
 
--spec is_timeout(timeout() | term()) -> boolean().
+%% @doc Returns `true' if `X' is a `timeout()' instance, otherwise `false'
+-spec is_timeout(X :: (timeout() | term())) -> boolean().
 is_timeout(infinity) -> true;
 is_timeout(X)        -> is_integer(X) andalso X >= 0.
 
+%% @doc Cancels `Timer' and removes `FlushMessage' from caller's mailbox if exists
 -spec cancel_and_flush_timer(reference(), term()) -> ok.
 cancel_and_flush_timer(Timer, FlushMessage) ->
     _ = erlang:cancel_timer(Timer),
@@ -38,6 +36,7 @@ cancel_and_flush_timer(Timer, FlushMessage) ->
     after 0 -> ok
     end.
 
+%% @doc Combination of {@link cancel_and_flush_timer/2} and {@link erlang:send_after/3}
 -spec cancel_and_send_after(reference(), timeout(), pid(), term()) -> reference().
 cancel_and_send_after(OldTimer, Time, Pid, Message) ->
     _ = case Pid =:= self() of
@@ -45,8 +44,3 @@ cancel_and_send_after(OldTimer, Time, Pid, Message) ->
             false -> erlang:cancel_timer(OldTimer)
         end,
     erlang:send_after(Time, Pid, Message).
-
--spec now_ms() -> milliseconds().
-now_ms() ->
-    {Mega, Sec, Micro} = os:timestamp(),
-    (Mega * 1000 * 1000 * 1000) + (Sec * 1000) + (Micro div 1000).

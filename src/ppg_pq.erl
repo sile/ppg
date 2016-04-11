@@ -1,5 +1,8 @@
 %% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
 %%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
+%%
 %% @doc A priority queue implementation of using the pairing heap algorithm
 %% @private
 -module(ppg_pq).

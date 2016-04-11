@@ -1,7 +1,7 @@
 ppg
 ===
 
-Plumtree based process group
+Plumtree based Process Group
 
 Build
 -----
@@ -46,3 +46,9 @@ Reference
 - [Plumtree: Epidemic Broadcast Trees](http://homepages.gsd.inesc-id.pt/~jleitao/pdf/srds07-leitao.pdf)
 - [HyParView: a membership protocol for reliable gossip-based broadcast](http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf)
 
+License
+-------
+
+This library is released under the MIT License.
+
+See the [LICENSE](LICENSE) file for full license information.

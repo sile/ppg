@@ -1,4 +1,7 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc A Plumtree Implementation
 %%
@@ -40,7 +43,7 @@
 -record(schedule,
         {
           timer = make_ref()   :: reference(),
-          queue = ppg_pq:new() :: ppg_pq:heap({ppg_util:milliseconds(), event()})
+          queue = ppg_pq:new() :: ppg_pq:heap({milli_seconds(), event()})
         }).
 
 -define(TREE, ?MODULE).
@@ -89,6 +92,8 @@
 -type view() :: ppg_hyparview:view().
 
 -type connection() :: ppg_hyparview:connection().
+
+-type milli_seconds() :: non_neg_integer().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
@@ -167,7 +172,7 @@ handle_info({'PRUNE',  Connection},      View, Tree) -> {ok, {View, handle_prune
 handle_info({'GRAFT',  Connection, Arg}, View, Tree) -> {ok, {View, handle_graft(Arg, Connection, Tree)}};
 handle_info({'TICK',   Connection},      View, Tree) -> {ok, {View, handle_tick(Connection, Tree)}};
 handle_info({'TACK',   Connection},      View, Tree) -> {ok, {View, handle_tack(Connection, Tree)}};
-handle_info({?MODULE, schedule},         View, Tree) -> {ok, handle_schedule(ppg_util:now_ms(), View, Tree)};
+handle_info({?MODULE, schedule},         View, Tree) -> {ok, handle_schedule(erlang:system_time(milli_seconds), View, Tree)};
 handle_info(_Info, _View, _Tree)                     -> ignore.
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -243,7 +248,7 @@ handle_tack(Connection, Tree) ->
             Tree#?TREE{connections = Connections, schedule = Schedule}
     end.
 
--spec handle_schedule(ppg_util:milliseconds(), view(), tree()) -> {view(), tree()}.
+-spec handle_schedule(milli_seconds(), view(), tree()) -> {view(), tree()}.
 handle_schedule(Now, View0, Tree0) ->
     Schedule = Tree0#?TREE.schedule,
     case ppg_pq:out(Schedule#schedule.queue) of
@@ -293,7 +298,7 @@ handle_schedule(Now, View0, Tree0) ->
 -spec schedule(timeout(), event(), #schedule{}) -> #schedule{}.
 schedule(infinity, _,  Schedule) -> Schedule;
 schedule(After, Event, Schedule) ->
-    ExecutionTime = ppg_util:now_ms() + After,
+    ExecutionTime = erlang:system_time(milli_seconds) + After,
     Queue = ppg_pq:in({ExecutionTime, Event}, Schedule#schedule.queue),
     case ppg_pq:peek(Schedule#schedule.queue) of
         {Next, _} when Next =< (ExecutionTime + 10) ->

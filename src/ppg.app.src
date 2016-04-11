@@ -1,5 +1,5 @@
 {application, ppg,
- [{description, "Plumtree based process group"},
+ [{description, "Plumtree based Process Group"},
   {vsn, "0.1.2"},
   {registered, [ppg_sup, ppg_group_sup]},
   {mod, {ppg_app, []}},

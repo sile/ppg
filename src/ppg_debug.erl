@@ -1,4 +1,7 @@
-%% @copyright 2016 Takeru Ohta <phjgt308@gmail.com>
+%% Copyright (c) 2016, Takeru Ohta <phjgt308@gmail.com>
+%%
+%% This software is released under the MIT License.
+%% See the LICENSE file in the project root for full license information.
 %%
 %% @doc This module provides debugging functionalities
 -module(ppg_debug).
@@ -66,9 +69,6 @@ leave_n(Group, N) ->
     {ok, Members} = ppg:get_members(Group),
     lists:foreach(fun ({_, Peer}) -> ok = ppg:leave(Peer) end, lists:sublist(shuffle(Members), N)).
 
-%% TODO: suspendを追加する
-%% TODO: MemberCountとMessageCountを分ける
-%% TODO: show messages duplication rate
 -spec reachability_test(pos_integer(), timeout(), timeout(), timeout(), Options) -> ReceivedMessageCount when
       Options :: [{group, ppg:name()} |
                   ppg:join_option()],
