@@ -1,6 +1,8 @@
 ppg
 ===
 
+[![hex.pm version](https://img.shields.io/hexpm/v/ppg.svg)](https://hex.pm/packages/ppg)
+
 Plumtree based Process Group
 
 Build
