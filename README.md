@@ -24,10 +24,10 @@ $ make start
 > ppg:which_groups().
 [foo].
 
-> {ok, Peer} = ppg:join(foo, self()).
+> {ok, Channel} = ppg:join(foo, self()).
 > lists:foreach(fun (_) -> ppg:join(foo, self()) end, lists:seq(1, 4)).
 
-> ppg:broadcast(Peer, bar).
+> ppg:broadcast(Channel, bar).
 > flush().
 Shell got bar
 Shell got bar
