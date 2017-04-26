@@ -45,7 +45,7 @@ See [EDoc Documents](doc/README.md)
 Reference
 ----------
 
-- [Plumtree: Epidemic Broadcast Trees](http://homepages.gsd.inesc-id.pt/~jleitao/pdf/srds07-leitao.pdf)
+- [Plumtree: Epidemic Broadcast Trees](http://www.gsd.inesc-id.pt/~ler/reports/srds07.pdf)
 - [HyParView: a membership protocol for reliable gossip-based broadcast](http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf)
 
 License
