@@ -46,7 +46,7 @@ Reference
 ----------
 
 - [Plumtree: Epidemic Broadcast Trees](http://www.gsd.inesc-id.pt/~ler/reports/srds07.pdf)
-- [HyParView: a membership protocol for reliable gossip-based broadcast](http://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf)
+- [HyParView: a membership protocol for reliable gossip-based broadcast](http://www.gsd.inesc-id.pt/~ler/reports/dsn07-leitao.pdf)
 
 License
 -------
